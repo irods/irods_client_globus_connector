@@ -36,6 +36,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <dlfcn.h>
+#include <pthread.h>
 
 #define MAX_DATA_SIZE 1024
 
@@ -43,6 +44,10 @@
 #define IRODS_RESOURCE_MAP "irodsResourceMap"
 
 #define IRODS_USER_MAP "irodsUerap"
+
+#define IRODS_LIST_UPDATE_INTERVAL_SECONDS             10
+#define IRODS_LIST_UPDATE_INTERVAL_COUNT               1000
+#define IRODS_CHECKSUM_DEFAULT_UPDATE_INTERVAL_SECONDS 5
 
 #ifndef DEFAULT_HOMEDIR_PATTERN
   /* Default homeDir pattern, referencing up to two strings with %s.
@@ -69,6 +74,15 @@ struct iRODS_Resource
 };
 
 struct iRODS_Resource iRODS_Resource_struct = {NULL,NULL};
+
+typedef struct cksum_thread_args
+{
+    bool                    *done_flag;
+    globus_gfs_operation_t  *op;
+    pthread_mutex_t         *mutex;
+    int                     *update_interval;
+} cksum_thread_args_t;
+
 
 GlobusDebugDefine(GLOBUS_GRIDFTP_SERVER_IRODS);
 static
@@ -366,6 +380,7 @@ iRODS_l_stat1(
 static
 int
 iRODS_l_stat_dir(
+    globus_gfs_operation_t              op,
     rcComm_t*                           conn,
     globus_gfs_stat_t **                out_stat,
     int *                               out_count,
@@ -394,14 +409,7 @@ iRODS_l_stat_dir(
         return status;
     }
 
-
-    // jjames - get the update interval hint
-    int update_interval;
-    globus_gridftp_server_get_update_interval(op, &update_interval);
-    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: update_interval = %d", update_interval);
-
     time_t last_update_time = time(0);
-
 
     //We should always be including "." and ".."
     //Run this block twice, add "." on iteration 0, ".." on iteration 1
@@ -437,26 +445,7 @@ iRODS_l_stat_dir(
 
     while ((status = rclReadCollection (conn, &collHandle, &collEnt)) >= 0)
     {
-        time_t now = time(0);
-        time_t diff = now - last_update_time;
 
-        // go ahead and send a partial listing every 500 entries
-        if (diff > update_interval || stat_count >= 500) {
-
-            // send partial stat
-            globus_gridftp_server_finished_stat_partial(op, GLOBUS_SUCCESS, stat_array, stat_count);
-
-            /* free the names and array */
-            for(i = 0; i < stat_count; i++)
-            {
-                globus_free(stat_array[i].name);
-            }
-            globus_free(stat_array);
-            stat_array = NULL;
-            stat_count = 0;
-
-            last_update_time = now;
-        }
 
         // skip duplicate listings of data objects (additional replicas)
         if ( (collEnt.objType == DATA_OBJ_T) &&
@@ -520,7 +509,31 @@ iRODS_l_stat_dir(
             stat_array[stat_ndx].mode = S_IFDIR | S_IRUSR | S_IWUSR |
                 S_IXUSR | S_IROTH | S_IXOTH | S_IRGRP | S_IXGRP;
         }
-      stat_ndx++;
+
+        stat_ndx++;
+
+        // go ahead and send a partial listing if either time or count has expired
+        time_t now = time(0);
+        time_t diff = now - last_update_time;
+
+        if (diff >= IRODS_LIST_UPDATE_INTERVAL_SECONDS || stat_count >= IRODS_LIST_UPDATE_INTERVAL_COUNT) {
+
+            // send partial stat
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: calling globus_gridftp_server_finished_stat_partial\n");
+            globus_gridftp_server_finished_stat_partial(op, GLOBUS_SUCCESS, stat_array, stat_count);
+
+            // free the names and array
+            for(int i = 0; i < stat_count; i++)
+            {
+                globus_free(stat_array[i].name);
+            }
+            globus_free(stat_array);
+            stat_array = NULL;
+            stat_count = 0;
+            stat_ndx = 0;
+
+            last_update_time = now;
+        }
     }
 
     rclCloseCollection (&collHandle);
@@ -930,7 +943,7 @@ globus_l_gfs_iRODS_stat(
 
         // jjames - iRODS_l_stat_dir sends partial listings via globus_gridftp_server_finished_stat_partial,
         // any left over the rest will be handled below as normal
-        rc = iRODS_l_stat_dir(iRODS_handle->conn, &stat_array, &stat_count, stat_info->pathname, iRODS_handle->user);
+        rc = iRODS_l_stat_dir(op, iRODS_handle->conn, &stat_array, &stat_count, stat_info->pathname, iRODS_handle->user);
         if(rc != 0)
         {
             result = globus_l_gfs_iRODS_make_error("iRODS_l_stat_dir failed.", rc);
@@ -939,6 +952,7 @@ globus_l_gfs_iRODS_stat(
 
     }
 
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: calling globus_gridftp_server_finished_stat\n");
     globus_gridftp_server_finished_stat(
         op, GLOBUS_SUCCESS, stat_array, stat_count);
     /* gota free the names */
@@ -952,6 +966,51 @@ globus_l_gfs_iRODS_stat(
 error:
     //globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "globus_l_gfs_iRODS_stat(): globus_l_gfs_iRODS_stat Failed. result = %d.\n",result);
     globus_gridftp_server_finished_stat(op, result, NULL, 0);
+}
+
+void *send_cksum_updates(void *args)
+{
+    time_t last_update_time = time(0);
+    time_t now = time(0);
+
+
+    cksum_thread_args_t *cksum_args = (cksum_thread_args_t*)args;
+
+    // get update interval from server, locking for "op" although not necessary right now
+
+    int cntr = 1;
+
+    while (true) {
+
+
+        pthread_mutex_lock(cksum_args->mutex);
+
+        bool break_out = *cksum_args->done_flag;
+
+        // send op
+        if (!break_out && now - last_update_time > *cksum_args->update_interval) {
+
+            // send update with globus_gridftp_server_intermediate_command
+            char int_str[11];
+            snprintf(int_str, 11, "%d", cntr);
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: calling globus_gridftp_server_intermediate_command with %s\n", int_str);
+            globus_gridftp_server_intermediate_command(*cksum_args->op, GLOBUS_SUCCESS, int_str);
+            cntr++;
+            last_update_time = time(0);
+        }
+
+        pthread_mutex_unlock(cksum_args->mutex);
+
+        if (break_out) {
+            break;
+        }
+
+        sleep(1);
+        now = time(0);
+    }
+
+    return NULL;
+
 }
 
 /*************************************************************************
@@ -1011,10 +1070,13 @@ globus_l_gfs_iRODS_command(
         goto alloc_error;
     }
 
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: cmd_info->command=%d\n", cmd_info->command);
+
     switch(cmd_info->command)
     {
         case GLOBUS_GFS_CMD_MKD:
             {
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: GLOBUS_GFS_CMD_MKD\n");
                 collInp_t collCreateInp;
                 bzero (&collCreateInp, sizeof (collCreateInp));
                 rstrcpy (collCreateInp.collName, collection, MAX_NAME_LEN);
@@ -1026,6 +1088,7 @@ globus_l_gfs_iRODS_command(
 
         case GLOBUS_GFS_CMD_RMD:
             {
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: GLOBUS_GFS_CMD_RMD\n");
                 collInp_t rmCollInp;
                 bzero (&rmCollInp, sizeof (rmCollInp));
                 rstrcpy (rmCollInp.collName, collection, MAX_NAME_LEN);
@@ -1037,6 +1100,7 @@ globus_l_gfs_iRODS_command(
 
         case GLOBUS_GFS_CMD_DELE:
             {
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: GLOBUS_GFS_CMD_DELE\n");
                 dataObjInp_t dataObjInp;
                 bzero (&dataObjInp, sizeof (dataObjInp));
                 rstrcpy (dataObjInp.objPath, collection, MAX_NAME_LEN);
@@ -1048,14 +1112,55 @@ globus_l_gfs_iRODS_command(
 
         case GLOBUS_GFS_CMD_CKSM:
            {
+               globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: GLOBUS_GFS_CMD_CKSUM\n");
                dataObjInp_t dataObjInp;
                bzero (&dataObjInp, sizeof (dataObjInp));
                rstrcpy (dataObjInp.objPath, collection, MAX_NAME_LEN);
                //The VERIFY_CHKSUM_KW flag seems useless: checksum is retrieved if exists or calculated
                //if it doesn't exist
                //addKeyVal (&dataObjInp.condInput, VERIFY_CHKSUM_KW, "");
+
+               // start a thread to send updates
+               pthread_t update_thread;
+               bool done_flag = false;
+               pthread_mutex_t mutex;
+
+               // get client requested update interval, if it is zero then client
+               // has not requested updates
+               int update_interval;
+               globus_gridftp_server_get_update_interval(op, &update_interval);
+               globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: client set update_interval to %d\n", update_interval);
+
+               bool thread_started = false;
+
+               if (update_interval > 0) {
+
+                   // client requested periodic updates
+                   cksum_thread_args_t cksum_args = {&done_flag, &op, &mutex, &update_interval};
+
+                   int result;
+                   if ((result = pthread_create(&update_thread, NULL, send_cksum_updates, &cksum_args)) != 0) {
+                       globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: could not create cksum update thread so no intermediate updates will occur [result=%d]\n", result);
+                   } else {
+                       thread_started = true;
+                   }
+               }
+
+
                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: rcDataObjChksum of collection=%s\n", collection);
                status = rcDataObjChksum (iRODS_handle->conn, &dataObjInp, &outChksum);
+
+               if (thread_started) {
+
+                   pthread_mutex_lock(&mutex);
+                   done_flag = true;
+                   pthread_mutex_unlock(&mutex);
+
+                   if (pthread_join(update_thread, NULL) != 0) {
+                       globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: could not join with cksum update thread.  continuing...\n");
+                   }
+               }
+
            }
            break;
 
