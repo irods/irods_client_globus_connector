@@ -968,6 +968,99 @@ error:
     globus_gridftp_server_finished_stat(op, result, NULL, 0);
 }
 
+globus_result_t globus_l_gfs_iRODS_realpath(
+        const char *                        in_path,
+        char **                             out_realpath,
+        void *                              user_arg) {
+
+
+    GlobusGFSName(globus_l_gfs_iRODS_realpath);
+
+    globus_l_gfs_iRODS_handle_t *       iRODS_handle;
+
+    int                                 res = -1;
+    char *                              handle_server;
+    char *                              URL;
+    globus_result_t                     result = 0;
+
+    iRODS_handle = (globus_l_gfs_iRODS_handle_t *) user_arg;
+
+    iRODS_handle = (globus_l_gfs_iRODS_handle_t *) user_arg;
+    if(iRODS_handle == NULL)
+    {
+        /* dont want to allow clear text so error out here */
+        return GlobusGFSErrorGeneric("iRODS DSI must be a default backend module. It cannot be an eret alone");
+    }
+
+    *out_realpath = strdup(in_path);
+    if(*out_realpath == NULL)
+    {
+        result = GlobusGFSErrorGeneric("iRODS DSI: strdup failed");
+    }
+
+    handle_server = getenv(PID_HANDLE_SERVER);
+    if (result == 0 && handle_server != NULL)
+    {
+        // single file transfer (stat has not been called); I need to try to resolve the PID
+        char* initPID = strdup(*out_realpath);
+        int i, count;
+        for (i=0, count=0; initPID[i]; i++)
+        {
+            count += (initPID[i] == '/');
+            if (count == 3)
+            {
+                break;
+            }
+        }
+        char PID[i + 1];
+        strncpy(PID, initPID, i);
+        PID[i] = '\0';
+
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: (%s) if '%s' is a PID the Handle Server '%s' will resolve it!\n", __FUNCTION__, PID, handle_server);
+
+        // Let's try to resolve the PID
+        res = manage_pid(handle_server, PID, &URL);
+        if (res == 0)
+        {
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: (%s) the Handle Server returned the URL: %s\n", __FUNCTION__, URL);
+            // Remove iRODS host from URL
+            char *s = strstr(URL, iRODS_handle->hostname);
+            if (s != NULL)
+            {
+                char *c = strstr(s, "/");
+                // set the resolved URL has collection to be trasnferred
+                //collection = strdup(c);
+
+               *out_realpath = str_replace(*out_realpath, PID, c);
+            }
+            else
+            {
+                // Manage scenario with a returned URL pointing to a different iRODS host (report an error)
+                char *err_str = globus_common_create_string("iRODS DSI: (%s) the Handle Server '%s' returnd the URL '%s' which is not managed by this GridFTP server which is connected through the iRODS DSI to: %s\n", __FUNCTION__, handle_server, URL, iRODS_handle->hostname);
+                result = GlobusGFSErrorGeneric(err_str);
+            }
+        }
+        else if (res == 1)
+        {
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: (%s) unable to resolve the PID with the Handle Server\n", __FUNCTION__);
+        }
+        else
+        {
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: (%s) unable to resolve the PID. The Handle Server returned the response code: %i\n", __FUNCTION__, res);
+        }
+    }
+
+    if (result == 0) {
+        iRODS_l_reduce_path(*out_realpath);
+    } else {
+        free(*out_realpath);
+        *out_realpath = NULL;
+    }
+
+    return result;
+}
+
+
 void *send_cksum_updates(void *args)
 {
     time_t last_update_time = time(0);
@@ -1461,6 +1554,7 @@ globus_l_gfs_iRODS_send(
             }
         }
     }
+
     iRODS_l_reduce_path(collection);
 
     //Get iRODS resource from destination path
@@ -1938,7 +2032,8 @@ globus_l_gfs_iRODS_deactivate(void);
  */
 static globus_gfs_storage_iface_t       globus_l_gfs_iRODS_dsi_iface =
 {
-    0,//GLOBUS_GFS_DSI_DESCRIPTOR_BLOCKING | GLOBUS_GFS_DSI_DESCRIPTOR_SENDER,
+    //0,//GLOBUS_GFS_DSI_DESCRIPTOR_BLOCKING | GLOBUS_GFS_DSI_DESCRIPTOR_SENDER,
+    GLOBUS_GFS_DSI_DESCRIPTOR_HAS_REALPATH,  // descriptor
     globus_l_gfs_iRODS_start,
     globus_l_gfs_iRODS_destroy,
     NULL, /* list */
@@ -1951,7 +2046,8 @@ static globus_gfs_storage_iface_t       globus_l_gfs_iRODS_dsi_iface =
     globus_l_gfs_iRODS_command,
     globus_l_gfs_iRODS_stat,
     NULL,
-    NULL
+    NULL,
+    globus_l_gfs_iRODS_realpath
 };
 
 /*
