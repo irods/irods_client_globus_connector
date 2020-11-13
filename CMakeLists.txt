@@ -44,21 +44,21 @@ if (DEFINED ENV{IRODS_PATH})
             #find_package(IRODS ${IRODS_MIN_VERSION} REQUIRED CONFIG)
             find_package(IRODS REQUIRED CONFIG)
 
-            set(CMAKE_INSTALL_RPATH $ENV{IRODS_EXTERNALS_PATH}/clang-runtime3.8-0/lib)
+            set(CMAKE_INSTALL_RPATH $ENV{IRODS_EXTERNALS_PATH}/clang-runtime6.0-0/lib)
             set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -stdlib=libc++")
             set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -stdlib=libc++")
             set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -stdlib=libc++")
             add_compile_options(-nostdinc++ -O0)
 
-            set(CMAKE_C_COMPILER $ENV{IRODS_EXTERNALS_PATH}/clang3.8-0/bin/clang)
-            set(CMAKE_CXX_COMPILER $ENV{IRODS_EXTERNALS_PATH}/clang3.8-0/bin/clang++)
+            set(CMAKE_C_COMPILER $ENV{IRODS_EXTERNALS_PATH}/clang6.0-0/bin/clang)
+            set(CMAKE_CXX_COMPILER $ENV{IRODS_EXTERNALS_PATH}/clang6.0-0/bin/clang++)
             link_libraries(c++abi)
 
             remove_definitions(-DIRODS_HEADER_HPP)
             add_definitions(-DIRODS_42)
             if (DEFINED ENV{IRODS_EXTERNALS_PATH})
                 set(irods_include_path_list "$ENV{IRODS_PATH}/include/irods"
-                                    "$ENV{IRODS_EXTERNALS_PATH}/clang3.8-0/include/c++/v1")
+                                    "$ENV{IRODS_EXTERNALS_PATH}/clang6.0-0/include/c++/v1")
 
                 set(irods_link_obj_path
                     PRIVATE
@@ -71,12 +71,12 @@ if (DEFINED ENV{IRODS_PATH})
                     #"$ENV{IRODS_PATH}/lib/libirods_common.so"
                     "-lrt"
                     "-lcurl"
-                    "$ENV{IRODS_EXTERNALS_PATH}/avro1.7.7-0/lib/libavrocpp.so"
+                    "$ENV{IRODS_EXTERNALS_PATH}/avro1.9.0-0/lib/libavrocpp.so"
                     "$ENV{IRODS_EXTERNALS_PATH}/jansson2.7-0/lib/libjansson.so"
-                    "$ENV{IRODS_EXTERNALS_PATH}/boost1.60.0-0/lib/libboost_filesystem.so"
-                    "$ENV{IRODS_EXTERNALS_PATH}/boost1.60.0-0/lib/libboost_regex.so"
-                    "$ENV{IRODS_EXTERNALS_PATH}/boost1.60.0-0/lib/libboost_system.so"
-                    "$ENV{IRODS_EXTERNALS_PATH}/boost1.60.0-0/lib/libboost_thread.so")
+                    "$ENV{IRODS_EXTERNALS_PATH}/boost1.67.0-0/lib/libboost_filesystem.so"
+                    "$ENV{IRODS_EXTERNALS_PATH}/boost1.67.0-0/lib/libboost_regex.so"
+                    "$ENV{IRODS_EXTERNALS_PATH}/boost1.67.0-0/lib/libboost_system.so"
+                    "$ENV{IRODS_EXTERNALS_PATH}/boost1.67.0-0/lib/libboost_thread.so")
             else()
                 message( FATAL_ERROR "IRODS_EXTERNALS_PATH is NOT defined, CMake will exit." )
             endif()
