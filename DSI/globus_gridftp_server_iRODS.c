@@ -1216,7 +1216,7 @@ globus_l_gfs_iRODS_command(
                // start a thread to send updates
                pthread_t update_thread;
                bool done_flag = false;
-               pthread_mutex_t mutex;
+               pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
                // get client requested update interval, if it is zero then client
                // has not requested updates
