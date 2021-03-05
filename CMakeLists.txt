@@ -114,6 +114,7 @@ set(irods_link_obj_path
     "${IRODS_EXTERNALS_FULLPATH_BOOST}/lib/libboost_thread.so"
     "${IRODS_EXTERNALS_FULLPATH_BOOST}/lib/libboost_filesystem.so"
     "/${IRODS_PLUGINS_DIRECTORY}/network/libtcp_client.so"
+    "/${IRODS_PLUGINS_DIRECTORY}/network/libssl_client.so"
     "/${IRODS_PLUGINS_DIRECTORY}/auth/libnative_client.so"
     )
 
