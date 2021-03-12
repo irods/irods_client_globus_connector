@@ -58,7 +58,7 @@ Prerequisites
 	Ubuntu:
 
 	```
-	sudo apt-get install 'irods-externals*
+	sudo apt-get install 'irods-externals*'
 	```
 
 	Centos:
@@ -71,6 +71,14 @@ Prerequisites
 
 	Ubuntu:
 	```
+        curl -LOs http://downloads.globus.org/toolkit/gt6/stable/installers/repo/deb/globus-toolkit-repo_latest_all.deb
+        sudo dpkg -i globus-toolkit-repo_latest_all.deb
+        sudo sed -i /etc/apt/sources.list.d/globus-toolkit-6-stable*.list \
+                -e 's/\^# deb /deb /'
+        sudo sed -i /etc/apt/sources.list.d/globus-connect-server-stable*.list \
+                -e 's/^# deb /deb /'
+        sudo apt-key add /usr/share/globus-toolkit-repo/RPM-GPG-KEY-Globus
+        sudo apt update
 	sudo apt-get install -y globus-gridftp-server-progs globus-gass-copy-progs libglobus-gss-assist-dev
 	sudo apt-get install -y libglobus-common-dev libglobus-gridftp-server-dev libglobus-gridmap-callout-error-dev
 	sudo apt-get install -y libcurl4-openssl-dev
@@ -83,6 +91,10 @@ Prerequisites
 	```
 	Centos:
 	```
+        sudo yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+        sudo yum install -y http://downloads.globus.org/toolkit/gt6/stable/installers/repo/rpm/globus-toolkit-repo-latest.noarch.rpm
+        sudo yum-config-manager --enable Globus-Connect-Server-5-Stable
+        sudo yum-config-manager --enable Globus-Toolkit-6-Stable
 	sudo yum install -y globus-gridftp-server-progs globus-gass-copy-progs
 	sudo yum install -y globus-common-devel globus-gridftp-server-devel   globus-gridmap-callout-error-devel
 	sudo yum install -y libcurl-devel
@@ -98,7 +110,7 @@ Building iRODS DSI with CMake
 
 1. Clone this repository
 	```
-	git clone https://github.com/EUDAT-B2STAGE/B2STAGE-GridFTP.git
+	git clone https://github.com/irods/irods_client_globus_connector.git
 	```
 
 2. Create a deployment folder:
@@ -125,7 +137,7 @@ Building iRODS DSI with CMake
 
 4. Build and install the iRODS-DSI:
 	```
-	cd B2STAGE-GridFTP
+	cd irods_client_globus_connector
 	cmake .
 	make install
 	```
