@@ -39,10 +39,12 @@ extern "C" {
 #include "irods_string_tokenize.hpp"
 #include "irods_virtual_path.hpp"
 #include "irods_hasher_factory.hpp"
-#include "dstream.hpp"
-#include "transport/default_transport.hpp"
-#include "filesystem.hpp"
-#include "client_connection.hpp"
+#ifdef IRODS_HEADER_HPP
+  #include "rodsClient.hpp"
+#else
+  #include "rodsClient.h"
+#endif
+
 #include <base64.h>
 
 // boost includes
@@ -964,14 +966,12 @@ globus_l_gfs_iRODS_stat(
     /* iRODSFileStat */
     if(!S_ISDIR(stat_buf.mode) || stat_info->file_only)
     {
-        //globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: globus_l_gfs_iRODS_stat(): single file\n");
         stat_array = (globus_gfs_stat_t *) globus_calloc(
              1, sizeof(globus_gfs_stat_t));
          memcpy(stat_array, &stat_buf, sizeof(globus_gfs_stat_t));
     }
     else
     {
-        //globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: globus_l_gfs_iRODS_stat(): collection\n");
         int rc;
         free(stat_buf.name);
 
@@ -998,7 +998,6 @@ globus_l_gfs_iRODS_stat(
     return;
 
 error:
-    //globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "globus_l_gfs_iRODS_stat(): globus_l_gfs_iRODS_stat Failed. result = %d.\n",result);
     globus_gridftp_server_finished_stat(op, result, nullptr, 0);
 }
 
@@ -1238,8 +1237,6 @@ globus_l_gfs_iRODS_command(
 
         case GLOBUS_GFS_CMD_CKSM:
            {
-               namespace io = irods::experimental::io;
-
                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: GLOBUS_GFS_CMD_CKSUM\n");
                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: algorithm=%s\n", cmd_info->cksm_alg);
                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: collection=%s\n", collection);
@@ -1337,8 +1334,8 @@ globus_l_gfs_iRODS_command(
                }
 
                // get the hasher
-               irods::Hasher hasher;
-               irods::error ret = irods::getHasher(
+               irods::globus::Hasher hasher;
+               irods::error ret = irods::globus::getHasher(
                                       cmd_info->cksm_alg,
                                       hasher );
                if ( !ret.ok() ) {
