@@ -24,26 +24,23 @@
 cmake_minimum_required (VERSION 3.11 FATAL_ERROR)
 
 find_package(IRODS 4.2.8 EXACT REQUIRED CONFIG)
-include(RequireOutOfSourceBuild)
-
 set(CMAKE_C_COMPILER ${IRODS_EXTERNALS_FULLPATH_CLANG}/bin/clang)
 set(CMAKE_CXX_COMPILER ${IRODS_EXTERNALS_FULLPATH_CLANG}/bin/clang++)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(GNUInstallDirs)
 if (NOT DEFINED ENV{DEST_LIB_DIR})
     set(ENV{DEST_LIB_DIR} "/${CMAKE_INSTALL_LIBDIR}")
-    #set(ENV{DEST_LIB_DIR} "/usr/lib64")
-    # Note: this may have to be lib64 on 64-bit platforms.
 endif()
-message("DEST_LIB_DIR is defined as $ENV{DEST_LIB_DIR}")
+
 message("CMAKE_INSTALL_LIBDIR is defined as ${CMAKE_INSTALL_LIBDIR}")
 message("CMAKE_INSTALL_FULL_LIBDIR is defined as ${CMAKE_INSTALL_FULL_LIBDIR}")
 
 project (iRODS_DSI C CXX)
-include(UseLibCXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+add_compile_options(-nostdinc++)
+
 set(GENERIC_LIB_VERSION "1.8")
 
 ##### Check ENV variables ######
@@ -96,9 +93,10 @@ add_compile_options(-Wall -Wextra -Werror -Wno-unused-parameter)
 remove_definitions(-DIRODS_HEADER_HPP)
 add_definitions(-DIRODS_42)
 set(irods_include_path_list
-    "${IRODS_INCLUDE_DIRS}"
-    "${IRODS_EXTERNALS_FULLPATH_BOOST}/include"
-    "${IRODS_EXTERNALS_FULLPATH_JSON}/include"
+    ${IRODS_EXTERNALS_FULLPATH_CLANG}/include/c++/v1
+    ${IRODS_INCLUDE_DIRS}
+    ${IRODS_EXTERNALS_FULLPATH_BOOST}/include
+    ${IRODS_EXTERNALS_FULLPATH_JSON}/include
     )
 
 set(irods_link_obj_path
@@ -149,6 +147,7 @@ set(CPACK_RPM_PACKAGE_VENDOR "iRODS Consortium")
 set(CPACK_RPM_PACKAGE_URL "https://irods.org")
 set(CPACK_RPM_PACKAGE_AUTOREQ 0)
 set(CPACK_RPM_PACKAGE_AUTOPROV 0)
+set(CPACK_RPM_RELOCATION_PATHS $ENV{DEST_LIB_DIR})
 
 set(CPACK_ARCHIVE_COMPONENT_INSTALL OFF)
 
@@ -191,7 +190,7 @@ endif()
 
 if (NOT DEFINED ENV{DEST_ETC_DIR})
     if ($ENV{GLOBUS_LOCATION} STREQUAL "/usr")
-        set(ENV{DEST_ETC_DIR} "/etc/grid-security")
+        set(ENV{DEST_ETC_DIR} "${CMAKE_INSTALL_SYSCONFDIR}/grid-security")
     else()
         set(ENV{DEST_ETC_DIR} "$ENV{GLOBUS_LOCATION}/etc")
     endif()
@@ -207,7 +206,17 @@ message("DEST_BIN_DIR is defined as $ENV{DEST_BIN_DIR}")
 message("DSI library name will be: ${dsi_library_name}")
 message("Gridmap callout library name will be: ${gridmap_callout_library_name}")
 
-add_library(${dsi_library_name} SHARED DSI/globus_gridftp_server_iRODS.cpp DSI/pid_manager.c external/cJSON.c)
+add_library(${dsi_library_name} SHARED
+    DSI/globus_gridftp_server_iRODS.cpp
+    DSI/pid_manager.c external/cJSON.c
+    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/ADLER32Strategy.cpp
+    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/Hasher.cpp
+    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/MD5Strategy.cpp
+    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/SHA1Strategy.cpp
+    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/SHA256Strategy.cpp
+    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/SHA512Strategy.cpp
+    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/irods_hasher_factory.cpp
+    )
 add_library(${gridmap_callout_library_name} SHARED DSI/gridmap_iRODS_callout.c DSI/libirodsmap.c)
 
 set_target_properties(${dsi_library_name} PROPERTIES VERSION ${GENERIC_LIB_VERSION})
@@ -231,7 +240,11 @@ set(testpidmanager_exe "testpidmanager")
 add_executable(${testpidmanager_exe} DSI/pid_manager_test.c DSI/pid_manager.c external/cJSON.c)
 target_link_libraries(${testpidmanager_exe} ${irods_link_obj_path} "-lm -lglobus_gridftp_server" ${CURL_LIBRARIES})
 
-include_directories(${irods_include_path_list})
+include_directories(
+    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/include
+    ${irods_include_path_list}
+    )
+
 include_directories(
         $ENV{GLOBUS_LOCATION}/include/globus
         $ENV{GLOBUS_LOCATION}/lib/globus/include
@@ -246,6 +259,7 @@ endif()
 message(STATUS "PROJECT_BINARY_DIR is ${PROJECT_BINARY_DIR}")
 
 install(TARGETS ${dsi_library_name} ${gridmap_callout_library_name} DESTINATION $ENV{DEST_LIB_DIR})
+
 install(TARGETS ${testirodsmap_exe} DESTINATION $ENV{DEST_BIN_DIR})
 install(TARGETS ${testpidmanager_exe} DESTINATION $ENV{DEST_BIN_DIR})
 configure_file(DSI/${gridmap_callout_conf_name}.in ${gridmap_callout_conf_name})
