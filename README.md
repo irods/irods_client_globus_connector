@@ -1,14 +1,14 @@
-B2STAGE-GridFTP (iRODS-DSI)
-===============
+irods_client_globus_connector
+=============================
 
-B2STAGE service core code for EUDAT project: DSI interface for iRODS (version > 4)
+This is the iRODS Globus Connector.
 
 GridFTP is a high-performance, secure, reliable data transfer protocol which provides remote access to data stores.
 There are many different types of data storage systems from standard file systems to arrays of magnetic tape: to allow GridFTP to be used with as many data storage systems as possible, the GridFTP can be extended, implementing an interface called Data Storage Interface (DSI).
 
-The GridFTP iRODS DSI consists of C functions which can interact with iRODS through the iRODS C API. The main supported operations are get, put, delete and list.
+The iRODS Globus Connector consists of C functions which can interact with iRODS through the iRODS C API. The main supported operations are get, put, delete and list.
 
-![Alt text](/images/iRODS-DSI.png?raw=true "iRODS-DSI")
+![Alt text](/images/iRODS-DSI.png?raw=true "iRODS Globus Connector")
 
 Once installed and configured, users will be able to interact with iRODS through
 any GridFTP client passing to it a valid iRODS path; for instance:
@@ -105,7 +105,7 @@ Prerequisites
 	```
 
 
-Building iRODS DSI with CMake
+Building iRODS Globus Connector with CMake
 --------------------------------
 
 1. Clone this repository
@@ -135,7 +135,7 @@ Building iRODS DSI with CMake
 	export C_INCLUDE_PATH=/usr/include/globus
 	```
 
-4. Build and install the iRODS-DSI:
+4. Build and install the iRODS Globus Connector:
 	```
 	cd irods_client_globus_connector
 	cmake .
@@ -156,7 +156,7 @@ Configuring the GridFTP server and run
 	   "irods_default_resource" : "demoResc"
 	}
 	```
-	Note that the *"irods_host"* and *"irods_port"* identify the iRODS server that the DSI will contact during each request. Be sure to set the *irods_default_resource*, this variable is not set when you create the file with *iinit* or when you copy it over from another user.
+	Note that the *"irods_host"* and *"irods_port"* identify the iRODS server that the iRODS Globus Connector will contact during each request. Be sure to set the *irods_default_resource*, this variable is not set when you create the file with *iinit* or when you copy it over from another user.
 
 2. As the user who runs the GridFTP server, try an `ils` icommand to verify that the information set in the *irods_environment.json* are fine. If needed, perform an `iinit` to authenticate the iRODS user.
 
@@ -185,7 +185,7 @@ Configuring the GridFTP server and run
 	export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/<preferred_path>/"
 	```
 
-5. When deploying the DSI with iRODS 4.1, it is necessary to load the GridFTP server library alongside the DSI library by adding the following lines at the beginning of the *globus-gridftp-server*  (usually */etc/init.d/globus-gridftp-server*) file:
+5. When deploying the Globus Connector with iRODS 4.1, it is necessary to load the GridFTP server library alongside the DSI library by adding the following lines at the beginning of the *globus-gridftp-server*  (usually */etc/init.d/globus-gridftp-server*) file:
 	Ubuntu:
 	```
 	export LD_PRELOAD="$LD_PRELOAD:/usr/lib/x86_64-linux-gnu/libglobus_gridftp_server.so:/libglobus_gridftp_server_iRODS.so"
