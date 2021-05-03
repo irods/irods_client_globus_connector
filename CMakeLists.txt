@@ -24,6 +24,9 @@
 cmake_minimum_required (VERSION 3.11 FATAL_ERROR)
 
 find_package(IRODS 4.2.8 EXACT REQUIRED CONFIG)
+set(IRODS_CLIENT_REVISION "0")
+set(IRODS_CLIENT_VERSION "${IRODS_VERSION}.${IRODS_CLIENT_REVISION}")
+
 set(CMAKE_C_COMPILER ${IRODS_EXTERNALS_FULLPATH_CLANG}/bin/clang)
 set(CMAKE_CXX_COMPILER ${IRODS_EXTERNALS_FULLPATH_CLANG}/bin/clang++)
 
@@ -41,8 +44,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options(-nostdinc++)
 
-set(GENERIC_LIB_VERSION "1.8")
-
 ##### Check ENV variables ######
 if (DEFINED ENV{GLOBUS_LOCATION})
     message("GLOBUS_LOCATION is defined as $ENV{GLOBUS_LOCATION}")
@@ -51,8 +52,6 @@ else()
 endif()
 
 ##### iRODS #####
-set(IRODS_PLUGIN_REVISION "0")
-
 if (NOT IRODS_EXTERNALS_PACKAGE_ROOT)
   set(IRODS_EXTERNALS_PACKAGE_ROOT "/opt/irods-externals" CACHE STRING "Choose the location of iRODS external packages." FORCE)
   message(STATUS "Setting unspecified IRODS_EXTERNALS_PACKAGE_ROOT to '${IRODS_EXTERNALS_PACKAGE_ROOT}'. This is the correct setting for normal builds.")
@@ -116,18 +115,23 @@ set(irods_link_obj_path
     "/${IRODS_PLUGINS_DIRECTORY}/auth/libnative_client.so"
     )
 
-if (NOT CPACK_DEBIAN_PACKAGE_VERSION)
-    set(CPACK_DEBIAN_PACKAGE_VERSION ${IRODS_CPACK_DEBIAN_PACKAGE_VERSION})
+if (CPACK_GENERATOR STREQUAL "RPM")
+    set(IRODS_CLIENT_PACKAGE_FILE_NAME_SUFFIX "-${IRODS_CLIENT_VERSION}-1.${CMAKE_SYSTEM_PROCESSOR}")
+elseif(CPACK_GENERATOR STREQUAL "DEB")
+  if (CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+    set(CMAKE_SYSTEM_PROCESSOR "amd64")
+  endif()
+  set(IRODS_PLUGIN_PACKAGE_FILE_NAME_SUFFIX "_${IRODS_CLIENT_VERSION}~${IRODS_PLUGIN_LINUX_DISTRIBUTION_VERSION_CODENAME}_${CMAKE_SYSTEM_PROCESSOR}")
+else()
+    set(IRODS_PLUGIN_PACKAGE_FILE_NAME_SUFFIX "-${IRODS_CLIENT_VERSION}-${IRODS_LINUX_DISTRIBUTION_NAME}${IRODS_LINUX_DISTRIBUTION_VERSION_MAJOR}-${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
-set(CPACK_PACKAGE_FILE_NAME "irods-gridftp-client${IRODS_PACKAGE_FILE_NAME_SUFFIX}")
+set(CPACK_PACKAGE_FILE_NAME "irods-gridftp-client${IRODS_CLIENT_PACKAGE_FILE_NAME_SUFFIX}")
+MESSAGE("CPACK_PACKAGE_FILE_NAME is ${CPACK_PACKAGE_FILE_NAME}")
 set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
 set(CPACK_COMPONENT_INCLUDE_TOPLEVEL_DIRECTORY OFF)
 set(CPACK_COMPONENTS_GROUPING IGNORE)
-set(CPACK_PACKAGE_VERSION ${IRODS_VERSION})
-set(CPACK_PACKAGE_VERSION_MAJOR ${IRODS_VERSION_MAJOR})
-set(CPACK_PACKAGE_VERSION_MINOR ${IRODS_VERSION_MINOR})
-set(CPACK_PACKAGE_VERSION_PATCH ${IRODS_VERSION_PATCH})
+set(CPACK_PACKAGE_VERSION ${IRODS_CLIENT_VERSION})
 set(CPACK_PACKAGE_CONTACT "Renaissance Computing Institute <info@irods.org>")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "The integrated Rule-Oriented Data System")
 set(CPACK_PACKAGE_VENDOR "Renaissance Computing Institute <info@irods.org>")
@@ -153,10 +157,8 @@ set(CPACK_ARCHIVE_COMPONENT_INSTALL OFF)
 
 set(CPACK_DEBIAN_PACKAGE_NAME "irods-gridftp-client")
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "${IRODS_PACKAGE_DEPENDENCIES_STRING}, irods-runtime (= ${CPACK_DEBIAN_PACKAGE_VERSION}), libc6, libssl1.0.0")
-#set(CPACK_DEBIAN_PACKAGE_REPLACES "irods-icat, irods-resource")
 
 set(CPACK_RPM_PACKAGE_NAME "irods-gridftp-client")
-#set(CPACK_RPM_PACKAGE_OBSOLETES "irods-icat, irods-resource")
 if (IRODS_LINUX_DISTRIBUTION_NAME STREQUAL "centos" OR IRODS_LINUX_DISTRIBUTION_NAME STREQUAL "centos linux")
     set(CPACK_RPM_PACKAGE_REQUIRES "${IRODS_PACKAGE_DEPENDENCIES_STRING}, irods-runtime = ${IRODS_VERSION}, openssl")
 elseif (IRODS_LINUX_DISTRIBUTION_NAME STREQUAL "opensuse")
@@ -219,11 +221,11 @@ add_library(${dsi_library_name} SHARED
     )
 add_library(${gridmap_callout_library_name} SHARED DSI/gridmap_iRODS_callout.c DSI/libirodsmap.c)
 
-set_target_properties(${dsi_library_name} PROPERTIES VERSION ${GENERIC_LIB_VERSION})
+set_target_properties(${dsi_library_name} PROPERTIES VERSION ${IRODS_CLIENT_VERSION})
 set_target_properties(${dsi_library_name} PROPERTIES LINKER_LANGUAGE CXX)
 target_link_libraries(${dsi_library_name} ${irods_link_obj_path} ${CURL_LIBRARIES})
 
-set_target_properties(${gridmap_callout_library_name} PROPERTIES LINK_FLAGS ${gridmap_callout_library_LINK_FLAGS} VERSION ${GENERIC_LIB_VERSION})
+set_target_properties(${gridmap_callout_library_name} PROPERTIES LINK_FLAGS ${gridmap_callout_library_LINK_FLAGS} VERSION ${IRODS_CLIENT_VERSION})
 set_target_properties(${gridmap_callout_library_name} PROPERTIES LINKER_LANGUAGE CXX)
 target_link_libraries(${gridmap_callout_library_name} ${irods_link_obj_path} ${CURL_LIBRARIES})
 
