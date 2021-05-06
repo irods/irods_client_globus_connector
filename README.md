@@ -20,7 +20,7 @@ will list the content of the */tempZone/home/myuser/* iRODS collection.
 
 The module can be loaded by the GridFTP server at start-up time through a specific command line option. Therefore, no changes are required in the GridFTP server installation. The decoupling from the possible future changes to the server simplifies the maintenance of the software module.
 
-Install From Pre-Build Packages
+Install From Pre-Built Packages
 ===============
 
 The Globus plugin for iRODS can be installed from pre-built packages.
@@ -35,7 +35,7 @@ The Globus plugin for iRODS can be installed from pre-built packages.
 	sudo apt-get install irods-gridftp-client
 	```
 
-	Centos:
+	CentOS:
 	```
 	sudo yum -y install irods-gridftp-client
 	```
@@ -61,7 +61,7 @@ Prerequisites
 	sudo apt-get install 'irods-externals*'
 	```
 
-	Centos:
+	CentOS:
 	```
 	sudo yum -y install irods-devel
 	sudo yum install irods-externals-clang3.8-0.x86_64
@@ -191,7 +191,7 @@ Configuring the GridFTP server and run
 	export LD_PRELOAD="$LD_PRELOAD:/usr/lib/x86_64-linux-gnu/libglobus_gridftp_server.so:/libglobus_gridftp_server_iRODS.so"
 	```
 
-	Centos:
+	CentOS:
 	```
 	export LD_PRELOAD="$LD_PRELOAD:/usr/lib64/libglobus_gridftp_server.so:/libglobus_gridftp_server_iRODS.so"
 	```
