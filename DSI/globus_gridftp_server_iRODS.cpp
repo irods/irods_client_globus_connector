@@ -1335,11 +1335,13 @@ globus_l_gfs_iRODS_command(
 
                // get the hasher
                irods::globus::Hasher hasher;
+               std::string checksum_algorithm_lower(cmd_info->cksm_alg);
+               boost::to_lower(checksum_algorithm_lower);
                irods::error ret = irods::globus::getHasher(
-                                      cmd_info->cksm_alg,
+                                      checksum_algorithm_lower.c_str(),
                                       hasher );
                if ( !ret.ok() ) {
-                   globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: Could not get hasher for %s\n", cmd_info->cksm_alg);
+                   globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: Could not get hasher for %s\n", checksum_algorithm_lower.c_str());
                    status = ret.code();
                    break;
                }
