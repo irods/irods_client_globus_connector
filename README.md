@@ -6,7 +6,7 @@ This is the iRODS Globus Connector.
 GridFTP is a high-performance, secure, reliable data transfer protocol which provides remote access to data stores.
 There are many different types of data storage systems from standard file systems to arrays of magnetic tape: to allow GridFTP to be used with as many data storage systems as possible, the GridFTP can be extended, implementing an interface called Data Storage Interface (DSI).
 
-The iRODS Globus Connector consists of C functions which can interact with iRODS through the iRODS C API. The main supported operations are get, put, delete and list.
+The iRODS Globus Connector is a DSI that consists of C functions which can interact with iRODS through the iRODS C API. The main supported operations are get, put, delete, and list.
 
 ![Alt text](/images/iRODS-DSI.png?raw=true "iRODS Globus Connector")
 
@@ -53,32 +53,30 @@ Prerequisites
 
 - iRODS with the Development Tools and Runtime Libraries packages: follow the instructions at https://packages.irods.org/ to add the iRODS repository to your package manager. Installation instructions can be found at https://irods.org/download/
 
-- For 4.2, the iRODS external packages need to be installed. These provide a consistent build environment (cmake, clang, etc.) to build the GridFTP plugin:
+- For 4.2, the iRODS external packages need to be installed. These provide a consistent build environment (cmake, clang, etc.) to build the iRODS Globus Connector:
 
 	Ubuntu:
-
 	```
-	sudo apt-get install 'irods-externals*'
+	sudo apt-get -y install irods-externals-cmake3.11.4-0 irods-externals-clang6.0-0 irods-externals-jansson2.7-0 irods-dev irods-runtime
 	```
 
 	CentOS:
 	```
-	sudo yum -y install irods-devel
-	sudo yum install irods-externals-clang3.8-0.x86_64
+	sudo yum -y install irods-externals-cmake3.11.4-0 irods-externals-clang6.0-0 irods-externals-jansson2.7-0 irods-devel irods-runtime rpm-build
 	```
 
 - Globus and other packages:
 
 	Ubuntu:
 	```
-        curl -LOs http://downloads.globus.org/toolkit/gt6/stable/installers/repo/deb/globus-toolkit-repo_latest_all.deb
-        sudo dpkg -i globus-toolkit-repo_latest_all.deb
-        sudo sed -i /etc/apt/sources.list.d/globus-toolkit-6-stable*.list \
-                -e 's/\^# deb /deb /'
-        sudo sed -i /etc/apt/sources.list.d/globus-connect-server-stable*.list \
-                -e 's/^# deb /deb /'
-        sudo apt-key add /usr/share/globus-toolkit-repo/RPM-GPG-KEY-Globus
-        sudo apt update
+	curl -LOs http://downloads.globus.org/toolkit/gt6/stable/installers/repo/deb/globus-toolkit-repo_latest_all.deb
+	sudo dpkg -i globus-toolkit-repo_latest_all.deb
+	sudo sed -i /etc/apt/sources.list.d/globus-toolkit-6-stable*.list \
+		-e 's/\^# deb /deb /'
+	sudo sed -i /etc/apt/sources.list.d/globus-connect-server-stable*.list \
+		-e 's/^# deb /deb /'
+	sudo apt-key add /usr/share/globus-toolkit-repo/RPM-GPG-KEY-Globus
+	sudo apt update
 	sudo apt-get install -y globus-gridftp-server-progs globus-gass-copy-progs libglobus-gss-assist-dev
 	sudo apt-get install -y libglobus-common-dev libglobus-gridftp-server-dev libglobus-gridmap-callout-error-dev
 	sudo apt-get install -y libcurl4-openssl-dev
@@ -89,14 +87,15 @@ Prerequisites
 	sudo apt-get install -y globus-gsi-cert-utils-progs
 	sudo apt-get install -y globus-proxy-utils
 	```
-	Centos:
+
+	CentOS:
 	```
-        sudo yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
-        sudo yum install -y http://downloads.globus.org/toolkit/gt6/stable/installers/repo/rpm/globus-toolkit-repo-latest.noarch.rpm
-        sudo yum-config-manager --enable Globus-Connect-Server-5-Stable
-        sudo yum-config-manager --enable Globus-Toolkit-6-Stable
+	sudo yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+	sudo yum install -y http://downloads.globus.org/toolkit/gt6/stable/installers/repo/rpm/globus-toolkit-repo-latest.noarch.rpm
+	sudo yum-config-manager --enable Globus-Connect-Server-5-Stable
+	sudo yum-config-manager --enable Globus-Toolkit-6-Stable
 	sudo yum install -y globus-gridftp-server-progs globus-gass-copy-progs
-	sudo yum install -y globus-common-devel globus-gridftp-server-devel   globus-gridmap-callout-error-devel
+	sudo yum install -y globus-common-devel globus-gridftp-server-devel globus-gridmap-callout-error-devel
 	sudo yum install -y libcurl-devel
 	sudo yum install -y git
 	sudo yum install -y gcc-c++
@@ -146,7 +145,7 @@ Building iRODS Globus Connector with CMake
 Configuring the GridFTP server and run
 ===============
 
-1. As the user who runs the GridFTP server, create the file *~/.irods/irods_environment.json* (or *~/.irods/.irodsEnv* for iRODS < 4.1.x) and populate it with the information related to a rodsadmin" user; for instance:
+1. As the user who runs the GridFTP server, create the file *~/.irods/irods_environment.json* (or *~/.irods/.irodsEnv* for iRODS < 4.1.x) and populate it with the information related to a "rodsadmin" user; for instance:
 	```
 	{
 	   "irods_host" : "irods4",
@@ -205,7 +204,7 @@ Configuring the GridFTP server and run
 Additional configuration
 --------------------------------
 
-1. Optionally, it is possible to enable the DSI module to manage the input path as a PID: the DSI will try to resolve the PID and perform the requested operation using the URI returned by the Handle server (currently only listing and downloading is supported).
+1. Optionally, it is possible to enable the iRODS Globus Connector to manage the input path as a PID: the iRODS Globus Connector will try to resolve the PID and perform the requested operation using the URI returned by the Handle server (currently only listing and downloading is supported).
 	For instance:
 	```
 	globus-url-copy -list  gsiftp://develvm01.pico.cineca.it:2811/11100/da3dae0a-6371-11e5-ba64-a41f13eb32b2/
@@ -216,7 +215,7 @@ Additional configuration
 	```
 	will download the object pointed by the PID "11100/xa3dae0a-6371-11e5-ba64-a41f13eb32b1".
 
-	If the PID resolution fails (either because the Handle server cannot resolve the PID or because the path passed as input is not a PID) the DSI will try to perform the requested operation anyway, using the original input path. This guarantees that the DSI can accept both PIDs and standard iRODS paths.
+	If the PID resolution fails (either because the Handle server cannot resolve the PID or because the path passed as input is not a PID) the iRODS Globus Connector will try to perform the requested operation anyway, using the original input path. This guarantees that the iRODS Globus Connector can accept both PIDs and standard iRODS paths.
 
 	To enable the PID resolution export the address of your handle-resolver to the GridFTP configuration file (typically *$GLOBUS_LOCATION/etc/gridftp.conf*):
 	```
@@ -224,13 +223,13 @@ Additional configuration
 	```
 	If you are using a different resolver than the global handle resolver, replace *hdl.handle.net* with the correct address.
 
-	Note: Once the PID is correctly resolved, the requested operation (listing or downloading) will be correctly performed only if the URI returned by the Handle server is a valid iRODS path pointing to the iRODS instance to which the DSI is connected to.
+	Note: Once the PID is correctly resolved, the requested operation (listing or downloading) will be correctly performed only if the URI returned by the Handle server is a valid iRODS path pointing to the iRODS instance to which the iRODS Globus Connector is connected to.
 
 2. If desired, change the default home directory by setting the homeDirPattern environment variable in
 	```
 	$GLOBUS_LOCATION/etc/gridftp.conf
 	```
-	The pattern can reference up to two strings with `%s`, first gets substituted with the zone name, second with the user name.  The default alue is `"/%s/home/%s"`, making the default directory `/<zone>/home/<username>`.
+	The pattern can reference up to two strings with `%s`, first gets substituted with the zone name, second with the user name.  The default pattern is `"/%s/home/%s"`, making the default directory `/<zone>/home/<username>`.
 
 	Default configuration:
 	```
@@ -257,7 +256,7 @@ Additional configuration
 	```
 	If none of the listed paths is matched, the iRODS default resource is used.
 
-4. Optionally, use a Globus gridmap callout module to map subject DNs to iRODS user names based on the existing mappings in iRODS (in r_user_auth table).
+4. Optionally, use a Globus gridmap callout module to map subject DNs to iRODS user names based on the existing mappings in iRODS (in `r_user_auth` table).
 	Configuring this feature eliminates the need for a local grid map file - all user mappings can be done through the callout function.
 
 	The gridmap callout configuration file gets already created as '/preferred_path/gridmap_iRODS_callout.conf'.
@@ -290,13 +289,18 @@ $DEST_BIN_DIR/testirodsmap "/C=XX/O=YYY/CN=Example User"
 ```
 
 
-Licence
+License
 ---------------------------------
-Copyright 2011-2017 EUDAT CDI - www.eudat.eu.
+Copyright 2020-2021 University of North Carolina at Chapel Hill
 
-Copyright (c) 1999-2006 University of Chicago
+Copyright 2011-2017 EUDAT CDI - www.eudat.eu
+
+Copyright 1999-2006 University of Chicago
 
 
+ Globus iRODS Connector
+
+ Author: Justin James, RENCI
 
  Globus DSI to manage data on iRODS.
 
@@ -307,5 +311,4 @@ Copyright (c) 1999-2006 University of Chicago
 
  Author: Vladimir Mencl, University of Canterbury
  Email:  vladimir.mencl@canterbury.ac.n
-
 
