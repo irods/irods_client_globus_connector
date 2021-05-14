@@ -16,7 +16,7 @@ any GridFTP client passing to it a valid iRODS path; for instance:
 $ globus-url-copy -list gsiftp://develvm.cluster.cineca.it:2811/tempZone/home/myuser/
 ```
 
-will list the content of the */tempZone/home/myuser/* iRODS collection.
+will list the content of the `/tempZone/home/myuser/` iRODS collection.
 
 The module can be loaded by the GridFTP server at start-up time through a specific command line option. Therefore, no changes are required in the GridFTP server installation. The decoupling from the possible future changes to the server simplifies the maintenance of the software module.
 
@@ -30,7 +30,6 @@ The Globus plugin for iRODS can be installed from pre-built packages.
 - Install the packages as follows:
 
 	Ubuntu:
-
 	```
 	sudo apt-get install irods-gridftp-client
 	```
@@ -107,7 +106,7 @@ Prerequisites
 Building iRODS Globus Connector with CMake
 --------------------------------
 
-1. Clone this repository
+1. Clone this repository:
 	```
 	git clone https://github.com/irods/irods_client_globus_connector.git
 	```
@@ -117,15 +116,20 @@ Building iRODS Globus Connector with CMake
 	mkdir /<preferred_path>
 	```
 
-3. Set some environment variables that are used by the build process and the PATH so that the correct version of cmake will be found.
+3. Set the `PATH` so that the correct version of cmake will be found:
 	```
 	export PATH=/opt/irods-externals/cmake3.11.4-0/bin:$PATH
-	export GLOBUS_LOCATION="/usr"
+	```
+
+4. (Optional) Set some additional variables if desired/necessary:
+	```
+	export GLOBUS_LOCATION="/<preferred_path>"
 	export DEST_LIB_DIR="/<preferred_path>"
 	export DEST_BIN_DIR="/<preferred_path>"
 	export DEST_ETC_DIR="/<preferred_path>"
 	```
-	In Ubuntu you may need to set up C_INCLUDE_PATH so that the globus_config.h header can be found.
+
+	In Ubuntu you may need to set up C_INCLUDE_PATH so that the `globus_config.h` header can be found:
 	```
 	export C_INCLUDE_PATH=/usr/include/x86_64-linux-gnu/globus
 	```
@@ -134,18 +138,27 @@ Building iRODS Globus Connector with CMake
 	export C_INCLUDE_PATH=/usr/include/globus
 	```
 
-4. Build and install the iRODS Globus Connector:
+5. Build and install the iRODS Globus Connector:
 	```
 	cd irods_client_globus_connector
-	cmake .
-	make install
+	mkdir build
+	cd build
+	cmake ..
 	```
 
+6. Install or build the package
+	```
+	make install
+	```
+	or
+	```
+	make package
+	```
 
 Configuring the GridFTP server and run
 ===============
 
-1. As the user who runs the GridFTP server, create the file *~/.irods/irods_environment.json* (or *~/.irods/.irodsEnv* for iRODS < 4.1.x) and populate it with the information related to a "rodsadmin" user; for instance:
+1. As the user who runs the GridFTP server, create the file `~/.irods/irods_environment.json` (or `~/.irods/.irodsEnv` for iRODS < 4.1.x) and populate it with the information related to a "rodsadmin" user; for instance:
 	```
 	{
 	   "irods_host" : "irods4",
@@ -155,11 +168,11 @@ Configuring the GridFTP server and run
 	   "irods_default_resource" : "demoResc"
 	}
 	```
-	Note that the *"irods_host"* and *"irods_port"* identify the iRODS server that the iRODS Globus Connector will contact during each request. Be sure to set the *irods_default_resource*, this variable is not set when you create the file with *iinit* or when you copy it over from another user.
+	Note that the `"irods_host"` and `"irods_port"` identify the iRODS server that the iRODS Globus Connector will contact during each request. Be sure to set the `irods_default_resource`, this variable is not set when you create the file with `iinit` or when you copy it over from another user.
 
-2. As the user who runs the GridFTP server, try an `ils` icommand to verify that the information set in the *irods_environment.json* are fine. If needed, perform an `iinit` to authenticate the iRODS user.
+2. As the user who runs the GridFTP server, try an `ils` icommand to verify that the information set in the `irods_environment.json` are fine. If needed, perform an `iinit` to authenticate the iRODS user.
 
-3. Update the gridftp.conf file, typically in *$GLOBUS_LOCATION/etc/gridftp.conf*.
+3. Update the gridftp.conf file, typically in `$GLOBUS_LOCATION/etc/gridftp.conf`.
 
 - If the plugin was installed via pre-built packages:
 	```
@@ -179,12 +192,13 @@ Configuring the GridFTP server and run
 	$HOME /path/to/user/home
 	```
 
-4. If the plugin was built and the user set the DEST_LIB_DIR to /<preferred_path>, add the following line at the beginning of the *globus-gridftp-server* (usually */etc/init.d/globus-gridftp-server*) file. (This is not required if installing from pre-built packages.)
+4. If the plugin was built and the user set the DEST_LIB_DIR to /<preferred_path>, add the following line at the beginning of the `globus-gridftp-server` (usually `/etc/init.d/globus-gridftp-server`) file. (This is not required if installing from pre-built packages.)
 	```
 	export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/<preferred_path>/"
 	```
 
-5. When deploying the Globus Connector with iRODS 4.1, it is necessary to load the GridFTP server library alongside the DSI library by adding the following lines at the beginning of the *globus-gridftp-server*  (usually */etc/init.d/globus-gridftp-server*) file:
+5. When deploying the Globus Connector with iRODS 4.1, it is necessary to load the GridFTP server library alongside the DSI library by adding the following lines at the beginning of the `globus-gridftp-server`  (usually `/etc/init.d/globus-gridftp-server`) file:
+
 	Ubuntu:
 	```
 	export LD_PRELOAD="$LD_PRELOAD:/usr/lib/x86_64-linux-gnu/libglobus_gridftp_server.so:/libglobus_gridftp_server_iRODS.so"
@@ -217,11 +231,11 @@ Additional configuration
 
 	If the PID resolution fails (either because the Handle server cannot resolve the PID or because the path passed as input is not a PID) the iRODS Globus Connector will try to perform the requested operation anyway, using the original input path. This guarantees that the iRODS Globus Connector can accept both PIDs and standard iRODS paths.
 
-	To enable the PID resolution export the address of your handle-resolver to the GridFTP configuration file (typically *$GLOBUS_LOCATION/etc/gridftp.conf*):
+	To enable the PID resolution export the address of your handle-resolver to the GridFTP configuration file (typically `$GLOBUS_LOCATION/etc/gridftp.conf`):
 	```
 	$pidHandleServer "http://hdl.handle.net/api/handles"
 	```
-	If you are using a different resolver than the global handle resolver, replace *hdl.handle.net* with the correct address.
+	If you are using a different resolver than the global handle resolver, replace `hdl.handle.net` with the correct address.
 
 	Note: Once the PID is correctly resolved, the requested operation (listing or downloading) will be correctly performed only if the URI returned by the Handle server is a valid iRODS path pointing to the iRODS instance to which the iRODS Globus Connector is connected to.
 
