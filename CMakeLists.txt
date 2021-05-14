@@ -27,16 +27,12 @@ find_package(IRODS 4.2.8 EXACT REQUIRED CONFIG)
 set(IRODS_CLIENT_REVISION "1")
 set(IRODS_CLIENT_VERSION "${IRODS_VERSION}.${IRODS_CLIENT_REVISION}")
 
+set(IRODS_CLIENT_NAME "irods-gridftp-client")
+
 set(CMAKE_C_COMPILER ${IRODS_EXTERNALS_FULLPATH_CLANG}/bin/clang)
 set(CMAKE_CXX_COMPILER ${IRODS_EXTERNALS_FULLPATH_CLANG}/bin/clang++)
 
 include(GNUInstallDirs)
-if (NOT DEFINED ENV{DEST_LIB_DIR})
-    set(ENV{DEST_LIB_DIR} "/${CMAKE_INSTALL_LIBDIR}")
-endif()
-
-message("CMAKE_INSTALL_LIBDIR is defined as ${CMAKE_INSTALL_LIBDIR}")
-message("CMAKE_INSTALL_FULL_LIBDIR is defined as ${CMAKE_INSTALL_FULL_LIBDIR}")
 
 project (iRODS_DSI C CXX)
 
@@ -46,10 +42,39 @@ add_compile_options(-nostdinc++)
 
 ##### Check ENV variables ######
 if (DEFINED ENV{GLOBUS_LOCATION})
-    message("GLOBUS_LOCATION is defined as $ENV{GLOBUS_LOCATION}")
+    message(STATUS "GLOBUS_LOCATION is defined as '$ENV{GLOBUS_LOCATION}'")
 else()
     set(ENV{GLOBUS_LOCATION} "/usr")
+    message(STATUS "Setting unspecified GLOBUS_LOCATION to '$ENV{GLOBUS_LOCATION}'. This is the correct setting for normal builds.")
 endif()
+
+if (DEFINED ENV{DEST_LIB_DIR})
+    message(STATUS "DEST_LIB_DIR is defined as '$ENV{DEST_LIB_DIR}'")
+else()
+    if (IRODS_LINUX_DISTRIBUTION_NAME STREQUAL "centos")
+        set(ENV{DEST_LIB_DIR} "/usr/lib64")
+    elseif(IRODS_LINUX_DISTRIBUTION_NAME STREQUAL "ubuntu" OR IRODS_LINUX_DISTRIBUTION_NAME STREQUAL "debian")
+        set(ENV{DEST_LIB_DIR} "/usr/lib")
+    else()
+        set(ENV{DEST_LIB_DIR} "/usr/lib")
+    endif()
+    message(STATUS "Setting unspecified DEST_LIB_DIR to '$ENV{DEST_LIB_DIR}'. This is the correct setting for normal builds.")
+endif()
+
+if (DEFINED ENV{DEST_ETC_DIR})
+    message(STATUS "DEST_ETC_DIR is defined as '$ENV{DEST_ETC_DIR}'")
+else()
+    set(ENV{DEST_ETC_DIR} "/etc/grid-security")
+    message(STATUS "Setting unspecified DEST_ETC_DIR to '$ENV{DEST_ETC_DIR}'. This is the correct setting for normal builds.")
+endif()
+
+if (DEFINED ENV{DEST_BIN_DIR})
+    message(STATUS "DEST_BIN_DIR is defined as '$ENV{DEST_BIN_DIR}'")
+else()
+    set(ENV{DEST_BIN_DIR} "/usr/bin")
+    message(STATUS "Setting unspecified DEST_BIN_DIR to '$ENV{DEST_BIN_DIR}'. This is the correct setting for normal builds.")
+endif()
+
 
 ##### iRODS #####
 if (NOT IRODS_EXTERNALS_PACKAGE_ROOT)
@@ -115,19 +140,24 @@ set(irods_link_obj_path
     "/${IRODS_PLUGINS_DIRECTORY}/auth/libnative_client.so"
     )
 
+if (CPACK_GENERATOR)
+  message(STATUS "CPACK_GENERATOR is defined as '${CPACK_GENERATOR}'")
+else()
+  set(CPACK_GENERATOR ${IRODS_CPACK_GENERATOR} CACHE STRING "CPack generator to use, e.g. {DEB, RPM, TGZ}." FORCE)
+  message(STATUS "Setting unspecified CPACK_GENERATOR to '${CPACK_GENERATOR}'. This is the correct setting for normal builds.")
+endif()
+
+message(STATUS "CMAKE_SYSTEM_PROCESSOR is '${CMAKE_SYSTEM_PROCESSOR}'")
 if (CPACK_GENERATOR STREQUAL "RPM")
     set(IRODS_CLIENT_PACKAGE_FILE_NAME_SUFFIX "-${IRODS_CLIENT_VERSION}-1.${CMAKE_SYSTEM_PROCESSOR}")
 elseif(CPACK_GENERATOR STREQUAL "DEB")
-  if (CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-    set(CMAKE_SYSTEM_PROCESSOR "amd64")
-  endif()
-  set(IRODS_CLIENT_PACKAGE_FILE_NAME_SUFFIX "_${IRODS_CLIENT_VERSION}~${IRODS_PLUGIN_LINUX_DISTRIBUTION_VERSION_CODENAME}_${CMAKE_SYSTEM_PROCESSOR}")
+  set(IRODS_CLIENT_PACKAGE_FILE_NAME_SUFFIX "-${IRODS_CLIENT_VERSION}-${IRODS_LINUX_DISTRIBUTION_NAME}${IRODS_LINUX_DISTRIBUTION_VERSION_MAJOR}-${CMAKE_SYSTEM_PROCESSOR}")
 else()
-    set(IRODS_CLIENT_PACKAGE_FILE_NAME_SUFFIX "-${IRODS_CLIENT_VERSION}-${IRODS_LINUX_DISTRIBUTION_NAME}${IRODS_LINUX_DISTRIBUTION_VERSION_MAJOR}-${CMAKE_SYSTEM_PROCESSOR}")
+  set(IRODS_CLIENT_PACKAGE_FILE_NAME_SUFFIX "-${IRODS_CLIENT_VERSION}-${IRODS_LINUX_DISTRIBUTION_NAME}${IRODS_LINUX_DISTRIBUTION_VERSION_MAJOR}-${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
-set(CPACK_PACKAGE_FILE_NAME "irods-gridftp-client${IRODS_CLIENT_PACKAGE_FILE_NAME_SUFFIX}")
-MESSAGE("CPACK_PACKAGE_FILE_NAME is ${CPACK_PACKAGE_FILE_NAME}")
+set(CPACK_PACKAGE_FILE_NAME "${IRODS_CLIENT_NAME}${IRODS_CLIENT_PACKAGE_FILE_NAME_SUFFIX}")
+message(STATUS "CPACK_PACKAGE_FILE_NAME is defined as '${CPACK_PACKAGE_FILE_NAME}'")
 set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
 set(CPACK_COMPONENT_INCLUDE_TOPLEVEL_DIRECTORY OFF)
 set(CPACK_COMPONENTS_GROUPING IGNORE)
@@ -155,32 +185,20 @@ set(CPACK_RPM_RELOCATION_PATHS $ENV{DEST_LIB_DIR})
 
 set(CPACK_ARCHIVE_COMPONENT_INSTALL OFF)
 
-set(CPACK_DEBIAN_PACKAGE_NAME "irods-gridftp-client")
+set(CPACK_DEBIAN_PACKAGE_NAME ${IRODS_CLIENT_NAME})
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "${IRODS_PACKAGE_DEPENDENCIES_STRING}, irods-runtime (= ${IRODS_VERSION}), libc6, libssl1.0.0")
 
-set(CPACK_RPM_PACKAGE_NAME "irods-gridftp-client")
+set(CPACK_RPM_PACKAGE_NAME ${IRODS_CLIENT_NAME})
 if (IRODS_LINUX_DISTRIBUTION_NAME STREQUAL "centos" OR IRODS_LINUX_DISTRIBUTION_NAME STREQUAL "centos linux")
     set(CPACK_RPM_PACKAGE_REQUIRES "${IRODS_PACKAGE_DEPENDENCIES_STRING}, irods-runtime = ${IRODS_VERSION}, openssl")
 elseif (IRODS_LINUX_DISTRIBUTION_NAME STREQUAL "opensuse")
     set(CPACK_RPM_PACKAGE_REQUIRES "${IRODS_PACKAGE_DEPENDENCIES_STRING}, irods-runtime = ${IRODS_VERSION}, libopenssl1_0_0")
 endif()
 
-if (NOT CPACK_GENERATOR)
-  set(CPACK_GENERATOR ${IRODS_CPACK_GENERATOR} CACHE STRING "CPack generator to use, e.g. {DEB, RPM, TGZ}." FORCE)
-  message(STATUS "Setting unspecified CPACK_GENERATOR to ${CPACK_GENERATOR}. This is the correct setting for normal builds.")
-endif()
-
 include(CPack)
 
-
-if (DEFINED ENV{RESOURCE_MAP_PATH})
-    message("RESOURCE_MAP_PATH is defined as $ENV{RESOURCE_MAP_PATH}")
-else()
-    message( WARNING "RESOURCE_MAP_PATH is NOT defined!" )
-endif()
-
 if (DEFINED ENV{FLAVOR})
-    message("FLAVOR is defined as $ENV{FLAVOR}")
+    message(STATUS "FLAVOR is defined as $ENV{FLAVOR}")
     set(dsi_library_name globus_gridftp_server_iRODS_$ENV{FLAVOR})
     set(gridmap_callout_library_name gridmap_iRODS_callout_$ENV{FLAVOR})
     set(gridmap_callout_library_LINK_FLAGS "-lglobus_gridmap_callout_error")
@@ -190,23 +208,10 @@ else()
     set(gridmap_callout_library_LINK_FLAGS "-lglobus_gridmap_callout_error")
 endif()
 
-if (NOT DEFINED ENV{DEST_ETC_DIR})
-    if ($ENV{GLOBUS_LOCATION} STREQUAL "/usr")
-        set(ENV{DEST_ETC_DIR} "${CMAKE_INSTALL_SYSCONFDIR}/grid-security")
-    else()
-        set(ENV{DEST_ETC_DIR} "$ENV{GLOBUS_LOCATION}/etc")
-    endif()
-endif()
-message("DEST_ETC_DIR is defined as $ENV{DEST_ETC_DIR}")
-
-if (NOT DEFINED ENV{DEST_BIN_DIR})
-    set(ENV{DEST_BIN_DIR} "$ENV{GLOBUS_LOCATION}/bin")
-endif()
-message("DEST_BIN_DIR is defined as $ENV{DEST_BIN_DIR}")
 #################################
 
-message("DSI library name will be: ${dsi_library_name}")
-message("Gridmap callout library name will be: ${gridmap_callout_library_name}")
+message(STATUS "DSI library name will be '${dsi_library_name}'")
+message(STATUS "Gridmap callout library name will be '${gridmap_callout_library_name}'")
 
 add_library(${dsi_library_name} SHARED
     DSI/globus_gridftp_server_iRODS.cpp
@@ -254,11 +259,10 @@ include_directories(
         ${CURL_INCLUDE_DIR}
         DSI
         external)
+
 if (DEFINED ENV{FLAVOR})
     include_directories($ENV{GLOBUS_LOCATION}/include/ENV{FLAVOR})
 endif()
-
-message(STATUS "PROJECT_BINARY_DIR is ${PROJECT_BINARY_DIR}")
 
 install(TARGETS ${dsi_library_name} ${gridmap_callout_library_name} DESTINATION $ENV{DEST_LIB_DIR})
 
