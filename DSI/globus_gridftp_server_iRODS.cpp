@@ -2222,8 +2222,8 @@ globus_l_gfs_iRODS_deactivate(void);
  */
 static globus_gfs_storage_iface_t       globus_l_gfs_iRODS_dsi_iface =
 {
-    //0,//GLOBUS_GFS_DSI_DESCRIPTOR_BLOCKING | GLOBUS_GFS_DSI_DESCRIPTOR_SENDER,
-    GLOBUS_GFS_DSI_DESCRIPTOR_HAS_REALPATH,  // descriptor
+    GLOBUS_GFS_DSI_DESCRIPTOR_BLOCKING | GLOBUS_GFS_DSI_DESCRIPTOR_SENDER |
+      GLOBUS_GFS_DSI_DESCRIPTOR_HAS_REALPATH,  // descriptor
     globus_l_gfs_iRODS_start,
     globus_l_gfs_iRODS_destroy,
     nullptr, /* list */
