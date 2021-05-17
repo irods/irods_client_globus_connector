@@ -2005,6 +2005,7 @@ globus_l_gfs_net_write_cb(
 
     rh = (globus_l_iRODS_read_ahead_t *) user_arg;
     iRODS_handle = rh->iRODS_handle;
+    free(rh->buffer);
     globus_free(rh);
 
     globus_mutex_lock(&iRODS_handle->mutex);
@@ -2022,6 +2023,7 @@ globus_l_gfs_net_write_cb(
             {
                 tmp_rh = (globus_l_iRODS_read_ahead_t *)
                     globus_fifo_dequeue(&iRODS_handle->rh_q);
+                free(rh->buffer);
                 globus_free(tmp_rh);
             }
         }
