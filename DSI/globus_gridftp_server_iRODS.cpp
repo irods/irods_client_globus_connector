@@ -1856,7 +1856,7 @@ globus_l_gfs_iRODS_net_read_cb(
 {
     globus_bool_t                       finished = GLOBUS_FALSE;
     globus_l_gfs_iRODS_handle_t *       iRODS_handle;
-    globus_size_t                       bytes_written;
+    int                                 bytes_written;
 
     iRODS_handle = (globus_l_gfs_iRODS_handle_t *) user_arg;
 
@@ -1901,11 +1901,15 @@ globus_l_gfs_iRODS_net_read_cb(
                dataObjWriteInpBBuf.len = nbytes;
 
                bytes_written  = rcDataObjWrite(iRODS_handle->conn, &dataObjWriteInp, &dataObjWriteInpBBuf); //buffer need to be casted??
-               if (bytes_written < nbytes) {
+               if (bytes_written < dataObjWriteInp.len) {
+                   // erroring on any short write instead of only bytes_written < 0
                    iRODS_handle->cached_res = globus_l_gfs_iRODS_make_error("rcDataObjWrite failed", bytes_written);
                    iRODS_handle->done = GLOBUS_TRUE;
                }
-               globus_gridftp_server_update_bytes_written(op, offset, bytes_written);
+               else
+               {
+                   globus_gridftp_server_update_bytes_written(op, offset, bytes_written);
+               }
             }
         }
 
