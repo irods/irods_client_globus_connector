@@ -281,6 +281,28 @@ Additional configuration
 	```
 	Note that in order for this module to work, the server certificate DN must be authorized to connect as a rodsAdmin user (e.g., the 'rods' user).
 
+5.  To configure the number of threads used for iRODS read/write operations, add the $numberOfIrodsReadWriteThreads parameter to the GridFTP configuration file.  For example, to set this to 2 threads, set it as follows:
+
+    ```
+    $numberOfIrodsReadWriteThreads 2
+    ```
+
+    If this parameter is not set or the value is invalid, the default of 3 threads will be used.
+
+    The maximum value for this is 10 threads.  If it is set to a number higher than 10, it will default to 10.
+
+6.  To configure the file size threshold (in bytes) to switch from single threaded reads to multiple threaded reads, add the $irodsParallelFileSizeThresholdBytes parameter in the GridFTP configuration file.  For example, to set this to 32MB, set it as follows:
+
+    ```
+    $irodsParallelFileSizeThresholdBytes 33554432
+    ```
+
+    If this parameter is not set or the value is invalid, multithreaded reads will always be used.
+
+    If this parameter is set, the plugin will do a query to iRODS to determine the file size.  If the returned file size is less than $irodsParallelFileSizeThresholdBytes, only one read thread will be used.
+
+    It is suggested that the administrator tests small file downloads to determine the best setting for the $irodsParallelFileSizeThresholdBytes.  This depends on the network topology.  In some cases, doing a query might be less efficient than starting up multiple threads.  If that is the case don't set $irodsParallelFileSizeThresholdBytes.
+
 
 Additional notes
 ---------------------------------

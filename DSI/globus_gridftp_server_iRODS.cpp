@@ -26,6 +26,7 @@
 //#pragma GCC diagnostic ignored "-Wregister"`
 extern "C" {
   #include "globus_gridftp_server.h"
+  #include "globus_range_list.h"
 }
 //#pragma GCC diagnostic pop
 
@@ -39,6 +40,11 @@ extern "C" {
 #include "irods_string_tokenize.hpp"
 #include "irods_virtual_path.hpp"
 #include "irods_hasher_factory.hpp"
+#include "irods_at_scope_exit.hpp"
+#include "get_file_descriptor_info.h"
+#include "replica_close.h"
+#include "thread_pool.hpp"
+#include "filesystem.hpp"
 #ifdef IRODS_HEADER_HPP
   #include "rodsClient.hpp"
 #else
@@ -61,6 +67,10 @@ extern "C" {
 #include <dlfcn.h>
 #include <pthread.h>
 #include <iomanip>
+#include <condition_variable>
+
+// local includes
+#include "circular_buffer.hpp"
 
 #define MAX_DATA_SIZE 1024
 
@@ -89,7 +99,28 @@ extern "C" {
 /* If present, use the handle server to resolve PID */
 #define PID_HANDLE_SERVER "pidHandleServer"
 
+/* if present, set the number or read/write threads for file transfers */
+#define NUMBER_OF_IRODS_READ_WRITE_THREADS "numberOfIrodsReadWriteThreads"
+
+/* if present, set the number or read/write threads for file transfers */
+#define IRODS_PARALLEL_FILE_SIZE_THRESHOLD_BYTES "irodsParallelFileSizeThresholdBytes"
+
+
+const static unsigned int DEFAULT_NUMBER_OF_IRODS_READ_WRITE_THREADS = 3;
+const static unsigned int MAXIMUM_NUMBER_OF_IRODS_READ_WRITE_THREADS = 10;
+
 const static std::string CHECKSUM_AVU_NAMESPACE{"GLOBUS"};
+
+// struct to save buffer to be written to iRODS
+typedef struct read_write_buffer
+{
+    globus_byte_t *                     buffer;
+    globus_size_t                       nbytes;
+    globus_off_t                        offset;
+} read_write_buffer_t;
+
+// create reading and writing circular buffers (10 buffer entries and 30 second timeout)
+irods::experimental::circular_buffer<read_write_buffer_t> irods_write_circular_buffer{10, 30};
 
 static int                              iRODS_l_dev_wrapper = 10;
 /* structure and global variable for holding pointer to the (last) selected resource mapping */
@@ -172,9 +203,60 @@ iRODS_l_reduce_path(
     return 0;
 }
 
+/*
+*  the data structure representing the FTP session
+*/
+struct globus_l_gfs_iRODS_handle_t
+{
+    rcComm_t *                          conn;
+    int                                 stor_sys_type;
+    int                                 fd;
+    globus_mutex_t                      mutex;
+    globus_gfs_operation_t              op;
+    globus_bool_t                       done;
+    globus_bool_t                       read_eof;
+    int                                 outstanding;
+    int                                 optimal_count;
+    globus_size_t                       block_size;
+    globus_result_t                     cached_res;
+    globus_off_t                        blk_length;
+    globus_off_t                        blk_offset;
+
+    globus_fifo_t                       rh_q;
+
+    char *                              hostname;
+    int                                 port;
+
+    char *                              zone;
+    char *                              defResource;
+    char *                              user;
+    char *                              domain;
+
+    char *                              irods_dn;
+    char *                              original_stat_path;
+    char *                              resolved_stat_path;
+
+    // added for redesign (issue 33)
+    char *                              adminUser;
+    char *                              adminZone;
+    char *                              replica_token;
+    unsigned int                        number_of_irods_read_write_threads;
+    uint64_t                            irods_parallel_file_size_threshold_bytes;
+};
+
+std::condition_variable             outstanding_cntr_cv;
+std::mutex                          outstanding_cntr_mutex;
+
+void print_irods_handle(globus_l_gfs_iRODS_handle_t& handle, char * file, int line)
+{
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "%s:%d conn=%p \n", file, line, handle.conn);
+}
+
+
+
 typedef struct globus_l_iRODS_read_ahead_s
 {
-    struct globus_l_gfs_iRODS_handle_s *  iRODS_handle;
+    globus_l_gfs_iRODS_handle_t *       iRODS_handle;
     globus_off_t                        offset;
     globus_size_t                       length;
     globus_byte_t *                     buffer;
@@ -262,11 +344,14 @@ char *str_replace(char *orig, char *rep, char *with) {
 static
 void
 iRODS_disconnect(
-    rcComm_t *                           conn)
+    rcComm_t *                           conn,
+    const std::string&                   call_context_for_logging = "")
 
 {
-    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: disconnected.\n");
-    rcDisconnect(conn);
+    if (conn) {
+        rcDisconnect(conn);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s disconnected from iRODS.\n", call_context_for_logging.c_str());
+    }
 }
 
 static
@@ -294,7 +379,8 @@ iRODS_getUserName(
                 {
                     iRODS_user_name[len - 1] = '\0'; //Remove EOF
                 }
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: User found in irodsUserMap.conf: DN = %s, iRODS user = %s.\n", DN, iRODS_user_name);
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: User found in irodsUserMap.conf: DN = %s, iRODS user = %s.\n",
+                        DN, iRODS_user_name);
                 break;
             }
         }
@@ -331,14 +417,23 @@ iRODS_getResource(
                 {
                     iRODS_res[len - 1] = '\0'; //Remove EOF
                 }
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: found iRODS resource  %s for destinationPath %s.\n", iRODS_res, destinationPath);
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: found iRODS resource  %s for destinationPath %s.\n",
+                        iRODS_res, destinationPath);
 
                 /* store the mapping in the global pointers in iRODS_Resource_struct - duplicating the string value.
                  * Free any previously stored (duplicated) string pointer first!
                  */
-                if (iRODS_Resource_struct.resource != nullptr) { free(iRODS_Resource_struct.resource); };
+                if (iRODS_Resource_struct.resource != nullptr)
+                {
+                    free(iRODS_Resource_struct.resource);
+                    iRODS_Resource_struct.resource = nullptr;
+                };
                 iRODS_Resource_struct.resource =  strdup(iRODS_res);
-                if (iRODS_Resource_struct.path != nullptr) { free(iRODS_Resource_struct.path); };
+                if (iRODS_Resource_struct.path != nullptr)
+                {
+                    free(iRODS_Resource_struct.path);
+                    iRODS_Resource_struct.path = nullptr;
+                }
                 iRODS_Resource_struct.path = strdup(path_Read);
                 break;
             }
@@ -347,7 +442,7 @@ iRODS_getResource(
     }
     else
     {
-        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: irodsResourceMap file not found: %s.\n", getenv(IRODS_RESOURCE_MAP));
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: irodsResourceMap file not found: %s.\n", getenv(IRODS_RESOURCE_MAP));
     }
 
 }
@@ -365,13 +460,14 @@ iRODS_l_stat1(
     char *                              fname;
 
     collHandle_t collHandle;
+    memset(&collHandle, 0, sizeof(collHandle));
     int queryFlags;
     queryFlags = DATA_QUERY_FIRST_FG | VERY_LONG_METADATA_FG | NO_TRIM_REPL_FG;
     status = rclOpenCollection (conn, start_dir, queryFlags,  &collHandle);
     if (status >= 0)
     {
 
-        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: found collection %s.\n", start_dir);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: found collection %s.\n", start_dir);
         rsrcName = (char*) start_dir;
         memset(stat_out, '\0', sizeof(globus_gfs_stat_t));
         fname = rsrcName ? rsrcName : const_cast<char*>("(null)");
@@ -392,12 +488,12 @@ iRODS_l_stat1(
     {
         dataObjInp_t dataObjInp;
         rodsObjStat_t *rodsObjStatOut = nullptr;
-        bzero (&dataObjInp, sizeof (dataObjInp));
+        memset (&dataObjInp, 0, sizeof (dataObjInp));
         rstrcpy (dataObjInp.objPath, start_dir, MAX_NAME_LEN);
         status = rcObjStat (conn, &dataObjInp, &rodsObjStatOut);
         if (status >= 0)
         {
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: found data object %s.\n", start_dir);
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: found data object %s.\n", start_dir);
             memset(stat_out, '\0', sizeof(globus_gfs_stat_t));
             stat_out->symlink_target = nullptr;
             stat_out->name = strdup(start_dir);
@@ -449,7 +545,7 @@ iRODS_l_stat_dir(
     status = rclOpenCollection (conn, start_dir, queryFlags,  &collHandle);
 
     if (status < 0) {
-        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: rclOpenCollection of %s error. status = %d", start_dir, status);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: rclOpenCollection of %s error. status = %d", start_dir, status);
         return status;
     }
 
@@ -474,6 +570,7 @@ iRODS_l_stat_dir(
                 stat_array[stat_ndx].ino = iRODS_l_filename_hash(parent_dir);
                 stat_array[stat_ndx].name = globus_libc_strdup("..");
                 free(parent_dir);
+                parent_dir = nullptr;
             };
             stat_array[stat_ndx].nlink = 0;
             stat_array[stat_ndx].uid = getuid();
@@ -562,7 +659,7 @@ iRODS_l_stat_dir(
         if (diff >= IRODS_LIST_UPDATE_INTERVAL_SECONDS || stat_count >= IRODS_LIST_UPDATE_INTERVAL_COUNT) {
 
             // send partial stat
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: calling globus_gridftp_server_finished_stat_partial\n");
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: calling globus_gridftp_server_finished_stat_partial\n");
             globus_gridftp_server_finished_stat_partial(op, GLOBUS_SUCCESS, stat_array, stat_count);
 
             // free the names and array
@@ -591,56 +688,36 @@ iRODS_l_stat_dir(
     }
 }
 
-/*
-*  the data structure representing the FTP session
-*/
-typedef struct globus_l_gfs_iRODS_handle_s
-{
-    rcComm_t *                          conn;
-    int                                 stor_sys_type;
-    int                                 fd;
-    globus_mutex_t                      mutex;
-    globus_gfs_operation_t              op;
-    globus_bool_t                       done;
-    globus_bool_t                       read_eof;
-    int                                 outstanding;
-    int                                 optimal_count;
-    globus_size_t                       block_size;
-    globus_result_t                     cached_res;
-    globus_off_t                        blk_length;
-    globus_off_t                        blk_offset;
-
-    globus_fifo_t                       rh_q;
-
-    char *                              hostname;
-    int                                 port;
-
-    char *                              zone;
-    char *                              defResource;
-    char *                              user;
-    char *                              domain;
-
-    char *                              irods_dn;
-    char *                              original_stat_path;
-    char *                              resolved_stat_path;
-
-} globus_l_gfs_iRODS_handle_t;
 
 static
-globus_bool_t
+void
 globus_l_gfs_iRODS_read_from_net(
     globus_l_gfs_iRODS_handle_t *         iRODS_handle);
 
 static
-globus_bool_t
-globus_l_gfs_iRODS_send_next_to_client(
-    globus_l_gfs_iRODS_handle_t *         iRODS_handle);
+void
+globus_l_gfs_get_next_read_block(
+        globus_off_t&                offset,
+        globus_size_t&               read_length,
+        globus_l_gfs_iRODS_handle_t* iRODS_handle);
 
 static
 void
-globus_l_gfs_iRODS_read_ahead_next(
-    globus_l_gfs_iRODS_handle_t *         iRODS_handle);
+globus_l_gfs_net_write_cb(
+    globus_gfs_operation_t              op,
+    globus_result_t                     result,
+    globus_byte_t *                     buffer,
+    globus_size_t                       nbytes,
+    void *                              user_arg);
 
+static
+void
+seek_and_read(
+        globus_l_gfs_iRODS_handle_t *iRODS_handle,
+        std::vector<read_write_buffer_t>& irods_read_buffer_vector,
+        int thr_id,
+        rcComm_t *conn,
+        int irods_fd);
 /*
  *  utility function to make errors
  */
@@ -658,12 +735,61 @@ globus_l_gfs_iRODS_make_error(
 
     errorName = rodsErrorName(status, &errorSubName);
 
-    err_str = globus_common_create_string("iRODS DSI. Error: %s. %s: %s, status: %d.\n", msg, errorName, errorSubName, status);
+    err_str = globus_common_create_string("iRODS: Error: %s. %s: %s, status: %d.\n", msg, errorName, errorSubName, status);
     result = GlobusGFSErrorGeneric(err_str);
     free(err_str);
+    err_str = nullptr;
 
     return result;
 }
+
+static
+globus_bool_t
+iRODS_connect_and_login(
+    globus_l_gfs_iRODS_handle_t *         iRODS_handle,
+    globus_result_t&                      result,
+    rcComm_t*&                            conn,
+    const std::string&                    call_context_for_logging = "")
+{
+
+    result = GLOBUS_SUCCESS;
+
+    int       status;
+    rErrMsg_t errMsg;
+
+    {
+        globus_mutex_lock(&iRODS_handle->mutex);
+        irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+
+        if (getenv(IRODS_CONNECT_AS_ADMIN)!=nullptr) {
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s calling _rcConnect(%s,%i,%s,%s, %s, %s)\n",
+                    call_context_for_logging.c_str(), iRODS_handle->hostname, iRODS_handle->port, iRODS_handle->adminUser, iRODS_handle->adminZone,
+                    iRODS_handle->user, iRODS_handle->zone);
+            conn = _rcConnect(iRODS_handle->hostname, iRODS_handle->port, iRODS_handle->adminUser, iRODS_handle->adminZone,iRODS_handle->user,
+                    iRODS_handle->zone, &errMsg, 0, 0);
+        } else {
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s calling rcConnect(%s,%i,%s,%s)\n", iRODS_handle->hostname,
+                    call_context_for_logging.c_str(), iRODS_handle->port, iRODS_handle->user, iRODS_handle->zone);
+            conn = rcConnect(iRODS_handle->hostname, iRODS_handle->port, iRODS_handle->user, iRODS_handle->zone, 0, &errMsg);
+        }
+        if (conn == nullptr) {
+            char *err_str = globus_common_create_string("rcConnect failed:: %s Host: '%s', Port: '%i', UserName '%s', Zone '%s'\n",
+                    errMsg.msg, iRODS_handle->hostname, iRODS_handle->port, iRODS_handle->user, iRODS_handle->zone);
+            result = GlobusGFSErrorGeneric(err_str);
+            return false;
+        }
+    }
+
+    status = clientLogin(conn, nullptr, NULL);
+    if (status != 0) {
+        result = globus_l_gfs_iRODS_make_error("\'clientLogin\' failed.", status);
+        return false;
+    }
+
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s connected.\n", call_context_for_logging.c_str());
+
+    return true;
+} // end iRODS_connect_and_login
 
 /*************************************************************************
  *  start
@@ -682,6 +808,9 @@ globus_l_gfs_iRODS_make_error(
  *        of the finished_info structure, but it currently does not.
  *        The DSI developer should jsut follow this template for now
  ************************************************************************/
+
+
+
 extern "C"
 void
 globus_l_gfs_iRODS_start(
@@ -689,36 +818,45 @@ globus_l_gfs_iRODS_start(
     globus_gfs_session_info_t *         session_info)
 {
 
-    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: %s called\n", __FUNCTION__);
+    GlobusGFSName(globus_l_gfs_iRODS_start);
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s called\n", __FUNCTION__);
+
+    load_client_api_plugins();
 
     globus_l_gfs_iRODS_handle_t *       iRODS_handle;
-    globus_result_t                           result;
+    globus_result_t                     result;
     globus_gfs_finished_info_t          finished_info;
-
-    GlobusGFSName(globus_l_gfs_iRODS_start);
 
     rodsEnv myRodsEnv;
     char *user_name;
     char *homeDirPattern;
     int status;
-    rErrMsg_t errMsg;
-
-    iRODS_handle = (globus_l_gfs_iRODS_handle_t *)
-        globus_malloc(sizeof(globus_l_gfs_iRODS_handle_t));
-
-    if(iRODS_handle == nullptr)
-    {
-        result = GlobusGFSErrorGeneric("iRODS DSI start: malloc failed");
-        goto error;
-    }
-    globus_mutex_init(&iRODS_handle->mutex, nullptr);
-    globus_fifo_init(&iRODS_handle->rh_q);
 
     memset(&finished_info, '\0', sizeof(globus_gfs_finished_info_t));
     finished_info.type = GLOBUS_GFS_OP_SESSION_START;
     finished_info.result = GLOBUS_SUCCESS;
-    finished_info.info.session.session_arg = iRODS_handle;
     finished_info.info.session.username = session_info->username;
+
+    iRODS_handle = (globus_l_gfs_iRODS_handle_t *)
+        globus_malloc(sizeof(globus_l_gfs_iRODS_handle_t));
+
+    irods::at_scope_exit cleanup_and_finalize{[op, &result, &finished_info] {
+
+        if (result != GLOBUS_SUCCESS)
+        {
+            globus_gridftp_server_operation_finished(op, result, &finished_info);
+        }
+    }};
+
+    if(iRODS_handle == nullptr)
+    {
+        result = GlobusGFSErrorGeneric("iRODS: start: malloc failed");
+        return;
+    }
+    finished_info.info.session.session_arg = iRODS_handle;
+
+    globus_mutex_init(&iRODS_handle->mutex, nullptr);
+    globus_fifo_init(&iRODS_handle->rh_q);
 
     status = getRodsEnv(&myRodsEnv);
     if (status >= 0) {
@@ -727,6 +865,9 @@ globus_l_gfs_iRODS_start(
         iRODS_handle->hostname = strdup(myRodsEnv.rodsHost);
         iRODS_handle->port = myRodsEnv.rodsPort;
         iRODS_handle->zone = strdup(myRodsEnv.rodsZone);
+        iRODS_handle->adminUser = strdup(myRodsEnv.rodsUserName);
+        iRODS_handle->adminZone = strdup(myRodsEnv.rodsZone);
+
         // copy also the default resource if it is set
         if (strlen(myRodsEnv.rodsDefResource) > 0 ) {
             iRODS_handle->defResource = strdup(myRodsEnv.rodsDefResource);
@@ -753,57 +894,95 @@ globus_l_gfs_iRODS_start(
             // Second token is the zone
             char *token2 = strtok( nullptr, delims );
             if ( token2 != nullptr ) {
-                if (iRODS_handle->zone != nullptr) free(iRODS_handle->zone);
+
+                if (iRODS_handle->zone != nullptr)
+                {
+                    free(iRODS_handle->zone);
+                    iRODS_handle->zone = nullptr;
+                }
                 iRODS_handle->zone = strdup(token2);
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: found zone '%s' in user name '%s'\n", iRODS_handle->zone, iRODS_handle->user);
-                if (iRODS_handle->user != nullptr) free(iRODS_handle->user);
+
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: found zone '%s' in user name '%s'\n",
+                        iRODS_handle->zone, iRODS_handle->user);
+
+                if (iRODS_handle->user != nullptr)
+                {
+                    free(iRODS_handle->user);
+                    iRODS_handle->zone = nullptr;
+                }
                 iRODS_handle->user = strdup(token);
             }
         }
         free(username_to_parse);
+        username_to_parse = nullptr;
 
-        if (getenv(IRODS_CONNECT_AS_ADMIN)!=nullptr) {
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS_handle->hostname = [%s] iRODS_handle->port = [%i] myRodsEnv.rodsUserName = [%s] myRodsEnv.rodsZone = [%s] iRODS_handle->user = [%s] iRODS_handle->zone = [%s]\n", iRODS_handle->hostname, iRODS_handle->port, myRodsEnv.rodsUserName, myRodsEnv.rodsZone, iRODS_handle->user, iRODS_handle->zone);
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: calling _rcConnect(%s,%i,%s,%s, %s, %s)\n", iRODS_handle->hostname, iRODS_handle->port, myRodsEnv.rodsUserName, myRodsEnv.rodsZone, iRODS_handle->user, iRODS_handle->zone);
-            iRODS_handle->conn = _rcConnect(iRODS_handle->hostname, iRODS_handle->port, myRodsEnv.rodsUserName, myRodsEnv.rodsZone, iRODS_handle->user, iRODS_handle->zone, &errMsg, 0, 0);
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: _rcConnect returned %i\n", 0);
-        } else {
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: calling rcConnect(%s,%i,%s,%s)\n", iRODS_handle->hostname, iRODS_handle->port, iRODS_handle->user, iRODS_handle->zone);
-            iRODS_handle->conn = rcConnect(iRODS_handle->hostname, iRODS_handle->port, iRODS_handle->user, iRODS_handle->zone, 0, &errMsg);
-        }
-        if (iRODS_handle->conn == nullptr) {
-            char *err_str = globus_common_create_string("rcConnect failed:: %s Host: '%s', Port: '%i', UserName '%s', Zone '%s'\n",
-                    errMsg.msg, iRODS_handle->hostname, iRODS_handle->port, iRODS_handle->user, iRODS_handle->zone);
-            result = GlobusGFSErrorGeneric(err_str);
-            goto connect_error;
-        }
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: iRODS_handle->hostname = [%s] iRODS_handle->port = [%i] "
+                "myRodsEnv.rodsUserName = [%s] myRodsEnv.rodsZone = [%s] iRODS_handle->user = [%s] iRODS_handle->zone = [%s]\n",
+                iRODS_handle->hostname, iRODS_handle->port, iRODS_handle->adminUser, iRODS_handle->adminZone, iRODS_handle->user,
+                iRODS_handle->zone);
 
-        status = clientLogin(iRODS_handle->conn, nullptr, NULL);
-        if (status != 0) {
-            result = globus_l_gfs_iRODS_make_error("\'clientLogin\' failed.", status);
-            goto error;
+        if (!iRODS_connect_and_login(iRODS_handle, result, iRODS_handle->conn, "main thread"))
+        {
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: main thread: failed to connect.  exiting...\n");
+            return;
         }
-
-        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: connected.\n");
 
         homeDirPattern = getenv(HOMEDIR_PATTERN);
         if (homeDirPattern == nullptr) { homeDirPattern = const_cast<char*>(DEFAULT_HOMEDIR_PATTERN); }
         finished_info.info.session.home_dir = globus_common_create_string(homeDirPattern, iRODS_handle->zone, iRODS_handle->user);
         free(user_name);
+        user_name = nullptr;
+
+        // default to 3 threads for read/write
+        iRODS_handle->number_of_irods_read_write_threads = DEFAULT_NUMBER_OF_IRODS_READ_WRITE_THREADS;
+        char * number_of_irods_read_write_threads_str = getenv(NUMBER_OF_IRODS_READ_WRITE_THREADS);
+        if (number_of_irods_read_write_threads_str)
+        {
+            try
+            {
+                iRODS_handle->number_of_irods_read_write_threads = boost::lexical_cast<int>(number_of_irods_read_write_threads_str);
+
+                // set a hard limit in the range [1,10]
+                if (iRODS_handle->number_of_irods_read_write_threads > MAXIMUM_NUMBER_OF_IRODS_READ_WRITE_THREADS)
+                {
+                    iRODS_handle->number_of_irods_read_write_threads = MAXIMUM_NUMBER_OF_IRODS_READ_WRITE_THREADS;
+                }
+
+                if (iRODS_handle->number_of_irods_read_write_threads < 1)
+                {
+                    iRODS_handle->number_of_irods_read_write_threads = 1;
+                }
+            } catch ( const boost::bad_lexical_cast& ) {}
+        }
+
+        // if file size threshold is not set, it will default to 0 in which case no genquery
+        // will be performed and all downloads will using number_of_irods_read_write_threads
+        iRODS_handle->irods_parallel_file_size_threshold_bytes = 0L;
+        char * irods_parallel_file_size_threshold_bytes_str = getenv(IRODS_PARALLEL_FILE_SIZE_THRESHOLD_BYTES);
+        if (irods_parallel_file_size_threshold_bytes_str)
+        {
+            try
+            {
+                int64_t threshold = boost::lexical_cast<int64_t>(irods_parallel_file_size_threshold_bytes_str);
+                if (threshold > 0)
+                {
+                    iRODS_handle->irods_parallel_file_size_threshold_bytes = threshold;
+                }
+            } catch ( const boost::bad_lexical_cast& ) {
+            }
+        }
 
         globus_gridftp_server_set_checksum_support(op, "MD5:1;SHA256:2;SHA512:3;SHA1:4;ADLER32:10;");
 
         globus_gridftp_server_operation_finished(op, GLOBUS_SUCCESS, &finished_info);
         globus_free(finished_info.info.session.home_dir);
+        finished_info.info.session.home_dir = nullptr;
         return;
     }
 
     result = globus_l_gfs_iRODS_make_error("\'getRodsEnv\' failed.", status);
-connect_error:
-error:
-    globus_gridftp_server_operation_finished(
-        op, result, &finished_info);
-}
+
+} // globus_l_gfs_iRODS_start
 
 /*************************************************************************
  *  destroy
@@ -817,7 +996,7 @@ void
 globus_l_gfs_iRODS_destroy(
     void *                              user_arg)
 {
-    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: %s called\n", __FUNCTION__);
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s called\n", __FUNCTION__);
     globus_l_gfs_iRODS_handle_t *       iRODS_handle;
 
     if (user_arg != nullptr) {
@@ -825,11 +1004,14 @@ globus_l_gfs_iRODS_destroy(
         iRODS_handle = (globus_l_gfs_iRODS_handle_t *) user_arg;
         globus_mutex_destroy(&iRODS_handle->mutex);
         globus_fifo_destroy(&iRODS_handle->rh_q);
-        iRODS_disconnect(iRODS_handle->conn);
+
+        iRODS_disconnect(iRODS_handle->conn, "main_thread");
 
         globus_free(iRODS_handle);
-    };
-}
+        iRODS_handle = nullptr;
+    }
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s returned\n", __FUNCTION__);
+} // end globus_l_gfs_iRODS_destroy
 
 /*************************************************************************
  *  stat
@@ -858,6 +1040,14 @@ globus_l_gfs_iRODS_stat(
     globus_result_t                     result;
 
     GlobusGFSName(globus_l_gfs_iRODS_stat);
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s called\n", __FUNCTION__);
+
+    irods::at_scope_exit cleanup_and_finalize{[op, &result] {
+        if (result != GLOBUS_SUCCESS)
+        {
+            globus_gridftp_server_finished_stat(op, result, nullptr, 0);
+        }
+    }};
 
     iRODS_handle = (globus_l_gfs_iRODS_handle_t *) user_arg;
     /* first test for obvious directories */
@@ -900,14 +1090,15 @@ globus_l_gfs_iRODS_stat(
                 iRODS_handle->original_stat_path = strdup(PID);
                 //iRODS_handle->resolved_stat_path = strdup(stat_info->pathname);
 
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: if '%s' is a PID the Handle Server '%s' will resolve it!!\n", PID, handle_server);
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: if '%s' is a PID the Handle Server '%s' will resolve it!!\n",
+                        PID, handle_server);
 
                 // Let's try to resolve the PID
                 res = manage_pid(handle_server, PID, &URL);
                 if (res == 0)
                 {
                     // PID resolved
-                    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: the Handle Server returned the URL: %s\n", URL);
+                    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: the Handle Server returned the URL: %s\n", URL);
                     // Remove iRODS host from URL
                     char *s = strstr(URL, iRODS_handle->hostname);
                     if(s != nullptr)
@@ -925,30 +1116,33 @@ globus_l_gfs_iRODS_stat(
                     else
                     {
                         // Manage scenario with a returned URL pointing to a different iRODS host (report an error)
-                        char *err_str = globus_common_create_string("iRODS DSI: the Handle Server '%s' returnd the URL '%s' which is not managed by this GridFTP server which is connected through the iRODS DSI to: %s\n", handle_server, URL, iRODS_handle->hostname);
+                        char *err_str = globus_common_create_string("iRODS: the Handle Server '%s' returnd the URL '%s' "
+                                "which is not managed by this GridFTP server which is connected through the iRODS DSI to: %s\n",
+                                handle_server, URL, iRODS_handle->hostname);
                         result = GlobusGFSErrorGeneric(err_str);
-                        goto error;
+                        return;
                     }
                 }
                 else if (res == 1)
                 {
-                    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: unable to resolve the PID with the Handle Server\n");
+                    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: unable to resolve the PID with the Handle Server\n");
                 }
                 else
                 {
-                    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: unable to resolve the PID. The Handle Server returned the response code: %i\n", res);
+                    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: unable to resolve the PID. The Handle Server "
+                            "returned the response code: %i\n", res);
                 }
             }
             else
             {
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: this is not a valid PID: %s\n", stat_info->pathname);
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: this is not a valid PID: %s\n", stat_info->pathname);
             }
         }
 
-        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: stat_info->pathname=%s\n", stat_info->pathname);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: stat_info->pathname=%s\n", stat_info->pathname);
         if (iRODS_handle->resolved_stat_path)
         {
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: iRODS_handle->resolved_stat_path=%s\n", iRODS_handle->resolved_stat_path);
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: iRODS_handle->resolved_stat_path=%s\n", iRODS_handle->resolved_stat_path);
         }
     }
 
@@ -956,12 +1150,12 @@ globus_l_gfs_iRODS_stat(
     if (status == -808000 || status == -310000)
     {
         result = globus_l_gfs_iRODS_make_error("No such file or directory.", status); //UberFTP NEEDS "No such file or directory" in error message
-        goto error;
+        return;
     }
     else if(status < 0)
     {
         result = globus_l_gfs_iRODS_make_error("iRODS_l_stat1 failed.", status);
-        goto error;
+        return;
     }
     /* iRODSFileStat */
     if(!S_ISDIR(stat_buf.mode) || stat_info->file_only)
@@ -974,6 +1168,7 @@ globus_l_gfs_iRODS_stat(
     {
         int rc;
         free(stat_buf.name);
+        stat_buf.name = nullptr;
 
         // jjames - iRODS_l_stat_dir sends partial listings via globus_gridftp_server_finished_stat_partial,
         // any left over the rest will be handled below as normal
@@ -981,12 +1176,12 @@ globus_l_gfs_iRODS_stat(
         if(rc != 0)
         {
             result = globus_l_gfs_iRODS_make_error("iRODS_l_stat_dir failed.", rc);
-            goto error;
+            return;
         }
 
     }
 
-    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: calling globus_gridftp_server_finished_stat\n");
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: calling globus_gridftp_server_finished_stat\n");
     globus_gridftp_server_finished_stat(
         op, GLOBUS_SUCCESS, stat_array, stat_count);
     /* gota free the names */
@@ -995,11 +1190,10 @@ globus_l_gfs_iRODS_stat(
         globus_free(stat_array[i].name);
     }
     globus_free(stat_array);
+    stat_array = nullptr;
     return;
 
-error:
-    globus_gridftp_server_finished_stat(op, result, nullptr, 0);
-}
+} // end globus_l_gfs_iRODS_stat
 
 extern "C"
 globus_result_t globus_l_gfs_iRODS_realpath(
@@ -1008,6 +1202,7 @@ globus_result_t globus_l_gfs_iRODS_realpath(
         void *                              user_arg) {
 
     GlobusGFSName(globus_l_gfs_iRODS_realpath);
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s called\n", __FUNCTION__);
 
     globus_l_gfs_iRODS_handle_t *       iRODS_handle;
 
@@ -1028,7 +1223,7 @@ globus_result_t globus_l_gfs_iRODS_realpath(
     *out_realpath = strdup(in_path);
     if(*out_realpath == nullptr)
     {
-        result = GlobusGFSErrorGeneric("iRODS DSI: strdup failed");
+        result = GlobusGFSErrorGeneric("iRODS: strdup failed");
     }
 
     handle_server = getenv(PID_HANDLE_SERVER);
@@ -1049,13 +1244,14 @@ globus_result_t globus_l_gfs_iRODS_realpath(
         strncpy(PID, initPID, i);
         PID[i] = '\0';
 
-        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: (%s) if '%s' is a PID the Handle Server '%s' will resolve it!\n", __FUNCTION__, PID, handle_server);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: (%s) if '%s' is a PID the Handle Server '%s' will resolve it!\n",
+                __FUNCTION__, PID, handle_server);
 
         // Let's try to resolve the PID
         res = manage_pid(handle_server, PID, &URL);
         if (res == 0)
         {
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: (%s) the Handle Server returned the URL: %s\n", __FUNCTION__, URL);
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: (%s) the Handle Server returned the URL: %s\n", __FUNCTION__, URL);
             // Remove iRODS host from URL
             char *s = strstr(URL, iRODS_handle->hostname);
             if (s != nullptr)
@@ -1069,17 +1265,20 @@ globus_result_t globus_l_gfs_iRODS_realpath(
             else
             {
                 // Manage scenario with a returned URL pointing to a different iRODS host (report an error)
-                char *err_str = globus_common_create_string("iRODS DSI: (%s) the Handle Server '%s' returnd the URL '%s' which is not managed by this GridFTP server which is connected through the iRODS DSI to: %s\n", __FUNCTION__, handle_server, URL, iRODS_handle->hostname);
+                char *err_str = globus_common_create_string("iRODS: (%s) the Handle Server '%s' returnd the URL '%s' which is not "
+                        "managed by this GridFTP server which is connected through the iRODS DSI to: %s\n",
+                        __FUNCTION__, handle_server, URL, iRODS_handle->hostname);
                 result = GlobusGFSErrorGeneric(err_str);
             }
         }
         else if (res == 1)
         {
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: (%s) unable to resolve the PID with the Handle Server\n", __FUNCTION__);
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: (%s) unable to resolve the PID with the Handle Server\n", __FUNCTION__);
         }
         else
         {
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: (%s) unable to resolve the PID. The Handle Server returned the response code: %i\n", __FUNCTION__, res);
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: (%s) unable to resolve the PID. The Handle Server returned the "
+                    "response code: %i\n", __FUNCTION__, res);
         }
     }
 
@@ -1105,6 +1304,7 @@ void *send_cksum_updates(void *args)
     while (true) {
 
         pthread_mutex_lock(cksum_args->mutex);
+        irods::at_scope_exit unlock_mutex{[&cksum_args] { pthread_mutex_unlock(cksum_args->mutex); }};
 
         bool break_out = *cksum_args->done_flag;
 
@@ -1114,12 +1314,10 @@ void *send_cksum_updates(void *args)
             // send update with globus_gridftp_server_intermediate_command
             char size_t_str[32];
             snprintf(size_t_str, 32, "%zu", *cksum_args->bytes_processed);
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: calling globus_gridftp_server_intermediate_command with %s\n", size_t_str);
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: calling globus_gridftp_server_intermediate_command with %s\n", size_t_str);
             globus_gridftp_server_intermediate_command(*cksum_args->op, GLOBUS_SUCCESS, size_t_str);
             last_update_time = time(0);
         }
-
-        pthread_mutex_unlock(cksum_args->mutex);
 
         if (break_out) {
             break;
@@ -1159,7 +1357,6 @@ globus_l_gfs_iRODS_command(
     globus_gfs_command_info_t *         cmd_info,
     void *                              user_arg)
 {
-    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: %s called\n", __FUNCTION__);
     int                                 status = 0;
     globus_l_gfs_iRODS_handle_t *       iRODS_handle;
     char *                              collection;
@@ -1185,7 +1382,7 @@ globus_l_gfs_iRODS_command(
     iRODS_l_reduce_path(collection);
     if(collection == nullptr)
     {
-        result = GlobusGFSErrorGeneric("iRODS DSI: strdup failed");
+        result = GlobusGFSErrorGeneric("iRODS: strdup failed");
         globus_gridftp_server_finished_command(op, result, GLOBUS_NULL);
         return;
     }
@@ -1201,45 +1398,45 @@ globus_l_gfs_iRODS_command(
     {
         case GLOBUS_GFS_CMD_MKD:
             {
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: GLOBUS_GFS_CMD_MKD\n");
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: GLOBUS_GFS_CMD_MKD\n");
                 collInp_t collCreateInp;
-                bzero (&collCreateInp, sizeof (collCreateInp));
+                memset (&collCreateInp, 0, sizeof (collCreateInp));
                 rstrcpy (collCreateInp.collName, collection, MAX_NAME_LEN);
                 addKeyVal (&collCreateInp.condInput, RECURSIVE_OPR__KW, "");
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: rcCollCreate collection=%s\n", collection);
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: rcCollCreate collection=%s\n", collection);
                 status = rcCollCreate (iRODS_handle->conn, &collCreateInp);
             }
             break;
 
         case GLOBUS_GFS_CMD_RMD:
             {
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: GLOBUS_GFS_CMD_RMD\n");
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: GLOBUS_GFS_CMD_RMD\n");
                 collInp_t rmCollInp;
-                bzero (&rmCollInp, sizeof (rmCollInp));
+                memset (&rmCollInp, 0, sizeof (rmCollInp));
                 rstrcpy (rmCollInp.collName, collection, MAX_NAME_LEN);
                 addKeyVal (&rmCollInp.condInput, FORCE_FLAG_KW, "");
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: rcRmColl: collection=%s\n", collection);
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: rcRmColl: collection=%s\n", collection);
                 status = rcRmColl (iRODS_handle->conn, &rmCollInp,0);
             }
             break;
 
         case GLOBUS_GFS_CMD_DELE:
             {
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: GLOBUS_GFS_CMD_DELE\n");
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: GLOBUS_GFS_CMD_DELE\n");
                 dataObjInp_t dataObjInp;
-                bzero (&dataObjInp, sizeof (dataObjInp));
+                memset (&dataObjInp, 0, sizeof (dataObjInp));
                 rstrcpy (dataObjInp.objPath, collection, MAX_NAME_LEN);
                 addKeyVal (&dataObjInp.condInput, FORCE_FLAG_KW, "");
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: rcDataObjUnlink: collection=%s\n", collection);
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: rcDataObjUnlink: collection=%s\n", collection);
                 status = rcDataObjUnlink(iRODS_handle->conn, &dataObjInp);
             }
             break;
 
         case GLOBUS_GFS_CMD_CKSM:
            {
-               globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: GLOBUS_GFS_CMD_CKSUM\n");
-               globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: algorithm=%s\n", cmd_info->cksm_alg);
-               globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: collection=%s\n", collection);
+               globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: GLOBUS_GFS_CMD_CKSUM\n");
+               globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: algorithm=%s\n", cmd_info->cksm_alg);
+               globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: collection=%s\n", collection);
 
                // look up checksum in metadata
                std::string checksum_algorithm_upper(cmd_info->cksm_alg);
@@ -1257,7 +1454,7 @@ globus_l_gfs_iRODS_command(
                // has not requested updates
                int update_interval;
                globus_gridftp_server_get_update_interval(op, &update_interval);
-               globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: client set update_interval to %d\n", update_interval);
+               globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: client set update_interval to %d\n", update_interval);
 
                if (update_interval > 0) {
 
@@ -1266,7 +1463,8 @@ globus_l_gfs_iRODS_command(
 
                    int result;
                    if ((result = pthread_create(&update_thread, nullptr, send_cksum_updates, &cksum_args)) != 0) {
-                       globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: could not create cksum update thread so no intermediate updates will occur [result=%d]\n", result);
+                       globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: could not create cksum update thread so no intermediate updates "
+                               "will occur [result=%d]\n", result);
                    } else {
                        checksum_update_thread_started = true;
                    }
@@ -1289,7 +1487,7 @@ globus_l_gfs_iRODS_command(
                     checksum_value = row[0];
                     timestamp   = row[1];
                     modify_time = row[2];
-                    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: Searching for %s, value=%s, timestamp=%s, data_modify_time=%s\n",
+                    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: Searching for %s, value=%s, timestamp=%s, data_modify_time=%s\n",
                             checksum_avu_name.c_str(), checksum_value.c_str(), timestamp.c_str(), modify_time.c_str());
 
                     // found a checksum for this protocol check the timestamp and
@@ -1342,7 +1540,7 @@ globus_l_gfs_iRODS_command(
                                       checksum_algorithm_lower.c_str(),
                                       hasher );
                if ( !ret.ok() ) {
-                   globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: Could not get hasher for %s\n", checksum_algorithm_lower.c_str());
+                   globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: Could not get hasher for %s\n", checksum_algorithm_lower.c_str());
                    status = ret.code();
                    break;
                }
@@ -1357,7 +1555,7 @@ globus_l_gfs_iRODS_command(
                int fd = rcDataObjOpen(iRODS_handle->conn, &inp_obj);
                if (fd < 3) {
                    status = -1;
-                   globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: rcDataObjOpen returned invalid file descriptor = %d\n", fd);
+                   globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: rcDataObjOpen returned invalid file descriptor = %d\n", fd);
                    break;
                }
 
@@ -1374,9 +1572,11 @@ globus_l_gfs_iRODS_command(
                int length_read = 0;
                while ((length_read = rcDataObjRead(iRODS_handle->conn, &input, &output)) > 0) {
 
-                   pthread_mutex_lock(&mutex);
-                   checksum_bytes_processed += length_read;
-                   pthread_mutex_unlock(&mutex);
+                   {
+                       pthread_mutex_lock(&mutex);
+                       irods::at_scope_exit unlock_mutex{[&mutex] { pthread_mutex_unlock(&mutex); }};
+                       checksum_bytes_processed += length_read;
+                   }
 
                    std::string s(static_cast<char*>(output.buf), length_read);
                    hasher.update(s);
@@ -1398,21 +1598,21 @@ globus_l_gfs_iRODS_command(
                if (checksum_algorithm_upper == "SHA256") {
                    status = convert_base64_to_hex_string(digest, 256, hex_output);
                    if (status < 0) {
-                       globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: could not convert base64 to hex\n");
+                       globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: could not convert base64 to hex\n");
                        break;
                    }
                    outChksum = strdup(hex_output.c_str());
                } else if (checksum_algorithm_upper == "SHA512") {
                    status = convert_base64_to_hex_string(digest, 512, hex_output);
                    if (status < 0) {
-                       globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: could not convert base64 to hex\n");
+                       globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: could not convert base64 to hex\n");
                        break;
                    }
                    outChksum = strdup(hex_output.c_str());
                } else if (checksum_algorithm_upper == "SHA1") {
                    status = convert_base64_to_hex_string(digest, 160, hex_output);
                    if (status < 0) {
-                       globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: could not convert base64 to hex\n");
+                       globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: could not convert base64 to hex\n");
                        break;
                    }
                    outChksum = strdup(hex_output.c_str());
@@ -1451,21 +1651,25 @@ globus_l_gfs_iRODS_command(
     }
 
     free(collection);
+    collection = nullptr;
 
     if(status < 0)
     {
-        error_str = globus_common_create_string("iRODS DSI error: status = %d", status);
+        error_str = globus_common_create_string("iRODS: error: status = %d", status);
         result = GlobusGFSErrorGeneric(error_str);
     }
 
-    if (checksum_update_thread_started) {
+    if (checksum_update_thread_started)
+    {
 
-        pthread_mutex_lock(&mutex);
-        checksum_done_flag = true;
-        pthread_mutex_unlock(&mutex);
+        {
+            pthread_mutex_lock(&mutex);
+            irods::at_scope_exit unlock_mutex{[&mutex] { pthread_mutex_unlock(&mutex); }};
+            checksum_done_flag = true;
+        }
 
         if (pthread_join(update_thread, nullptr) != 0) {
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: could not join with cksum update thread.  continuing...\n");
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: could not join with cksum update thread.  continuing...\n");
         }
     }
 
@@ -1479,13 +1683,41 @@ globus_l_gfs_iRODS_command(
  *  This interface function is called when the client requests that a
  *  file be transfered to the server.
  *
- *  To receive a file the following functions will be used in roughly
+ *  To receive a file the following functions will be used in
  *  the presented order.  They are doced in more detail with the
  *  gridftp server documentation.
  *
  *      globus_gridftp_server_begin_transfer();
  *      globus_gridftp_server_register_read();
  *      globus_gridftp_server_finished_transfer();
+ *
+ *  Overview of flow:
+ *
+ *     - Call globus_gridftp_server_begin_transfer().
+ *
+ *     - Start N threads that loops until finished doing the following:
+ *       - Reads a {buffer,nbytes,offset} pair from a circular buffer
+ *       - Seeks to offset.
+ *       - Writes nbytes from buffer to IRODS.
+ *       - Terminate when the circular buffer is empty and the done flag is set.
+ *
+ *     - (A) Call globus_gridftp_server_register_read() optimal_count times
+ *       incrementing the outstanding counter for each.
+ *
+ *        - The callback for each:
+ *          - Puts its {buffer,nbytes,offset} on the circular buffer.
+ *          - Decrements outstanding counter.
+ *          - Sets the done flag when reading is finished.
+ *          - (B) Calls globus_gridftp_server_register_read()
+ *            (optimal_count - oustanding) times to make sure there are
+ *            always optimal_count callbacks waiting. Increment outstanding
+ *            counter for each.
+ *
+ *     - When finished, wait for N threads terminate and call
+ *       globus_gridftp_server_finished_transfer().
+ *
+ *     Note that (A) and (B) are performed in
+ *     globus_l_gfs_iRODS_read_from_net().
  *
  ************************************************************************/
 extern "C"
@@ -1495,134 +1727,352 @@ globus_l_gfs_iRODS_recv(
     globus_gfs_transfer_info_t *        transfer_info,
     void *                              user_arg)
 {
+    GlobusGFSName(globus_l_gfs_iRODS_recv);
+
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s called\n", __FUNCTION__);
+
     globus_l_gfs_iRODS_handle_t *       iRODS_handle;
     int                                 flags = O_WRONLY;
-    globus_bool_t                       finish = GLOBUS_FALSE;
     char *                              collection = nullptr;
     //char *                              handle_server;
     dataObjInp_t                        dataObjInp;
     openedDataObjInp_t                  dataObjWriteInp;
     int result;
 
-    GlobusGFSName(globus_l_gfs_iRODS_recv);
     iRODS_handle = (globus_l_gfs_iRODS_handle_t *) user_arg;
 
-    if(transfer_info->pathname == nullptr)
-    {
-        result = GlobusGFSErrorGeneric("iRODS DSI: transfer_info->pathname == nullptr");
-        goto alloc_error;
-    }
+    // start N threads to write to file
+    int number_of_irods_write_threads = iRODS_handle->number_of_irods_read_write_threads;
+    irods::thread_pool threads{number_of_irods_write_threads};
 
-    collection = strdup(transfer_info->pathname);
-    iRODS_l_reduce_path(collection);
-
-    //Get iRODS resource from destination path
-    if (getenv(IRODS_RESOURCE_MAP) !=nullptr)
     {
-        if(iRODS_Resource_struct.resource != nullptr && iRODS_Resource_struct.path != NULL)
+        globus_mutex_lock(&iRODS_handle->mutex);
+        irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+
+        if(transfer_info->pathname == nullptr)
         {
-            if(strncmp(iRODS_Resource_struct.path, transfer_info->pathname, strlen(iRODS_Resource_struct.path)) != 0 )
+            result = GlobusGFSErrorGeneric("iRODS: transfer_info->pathname == nullptr");
+            globus_gridftp_server_finished_transfer(op, result);
+            return;
+        }
+
+        collection = strdup(transfer_info->pathname);
+        iRODS_l_reduce_path(collection);
+
+        //Get iRODS resource from destination path
+        if (getenv(IRODS_RESOURCE_MAP) !=nullptr)
+        {
+            if(iRODS_Resource_struct.resource != nullptr && iRODS_Resource_struct.path != NULL)
             {
-                iRODS_getResource(transfer_info->pathname);
+                if(strncmp(iRODS_Resource_struct.path, transfer_info->pathname, strlen(iRODS_Resource_struct.path)) != 0 )
+                {
+                    iRODS_getResource(transfer_info->pathname);
+                }
+            }
+            else
+            {
+                 iRODS_getResource(transfer_info->pathname);
             }
         }
-        else
+
+        if(iRODS_handle == nullptr)
         {
-             iRODS_getResource(transfer_info->pathname);
+            /* dont want to allow clear text so error out here */
+            result = GlobusGFSErrorGeneric("iRODS DSI must be a default backend"
+                " module.  It cannot be an eret alone");
+            globus_gridftp_server_finished_transfer(op, result);
+            return;
         }
-    }
 
-    if(iRODS_handle == nullptr)
-    {
-        /* dont want to allow clear text so error out here */
-        result = GlobusGFSErrorGeneric("iRODS DSI must be a default backend"
-            " module.  It cannot be an eret alone");
-        goto alloc_error;
-    }
+        if(transfer_info->truncate)
+        {
+            flags |= O_TRUNC;
+        }
 
-    if(transfer_info->truncate)
-    {
-        flags |= O_TRUNC;
-    }
-
-    bzero (&dataObjInp, sizeof (dataObjInp));
-    rstrcpy (dataObjInp.objPath, collection, MAX_NAME_LEN);
-    dataObjInp.openFlags = flags;
-    // give priority to explicit resource mapping, otherwise use default resource if set
-    if (iRODS_Resource_struct.resource != nullptr)
-    {
-        addKeyVal (&dataObjInp.condInput, RESC_NAME_KW, iRODS_Resource_struct.resource);
-    } else if (iRODS_handle->defResource != nullptr ) {
-        addKeyVal (&dataObjInp.condInput, RESC_NAME_KW, iRODS_handle->defResource);
-    };
-    iRODS_handle->fd = rcDataObjOpen (iRODS_handle->conn, &dataObjInp);
-
-    if (iRODS_handle->fd > 0) {
-        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: Open existing object: %s.\n", collection);
-    }
-    else
-    {
-        //create the obj
-        bzero (&dataObjInp, sizeof (dataObjInp));
-        bzero (&dataObjWriteInp, sizeof (dataObjWriteInp));
+        memset (&dataObjInp, 0, sizeof (dataObjInp));
         rstrcpy (dataObjInp.objPath, collection, MAX_NAME_LEN);
-        dataObjInp.dataSize = 0;
-        // set operation type to PUT, otherwise acPostProcForPut rules will not fire through GridFTP uploads.
-        dataObjInp.oprType = PUT_OPR;
-        addKeyVal (&dataObjInp.condInput, FORCE_FLAG_KW, "");
+        dataObjInp.openFlags = flags;
+
         // give priority to explicit resource mapping, otherwise use default resource if set
         if (iRODS_Resource_struct.resource != nullptr)
         {
-            addKeyVal (&dataObjInp.condInput, DEST_RESC_NAME_KW, iRODS_Resource_struct.resource);
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: Creating file with resource: %s\n", iRODS_Resource_struct.resource);
+            addKeyVal (&dataObjInp.condInput, RESC_NAME_KW, iRODS_Resource_struct.resource);
         } else if (iRODS_handle->defResource != nullptr ) {
-            addKeyVal (&dataObjInp.condInput, DEST_RESC_NAME_KW, iRODS_handle->defResource);
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: Creating file with default resource: %s\n", iRODS_handle->defResource);
-        }
-        iRODS_handle->fd = rcDataObjCreate (iRODS_handle->conn, &dataObjInp);
-        if (iRODS_handle->fd < 0) {
-            result = globus_l_gfs_iRODS_make_error("rcDataObjCreate failed", iRODS_handle->fd);
-            goto error;
+            addKeyVal (&dataObjInp.condInput, RESC_NAME_KW, iRODS_handle->defResource);
+        };
+        iRODS_handle->fd = rcDataObjOpen (iRODS_handle->conn, &dataObjInp);
+
+        if (iRODS_handle->fd > 0) {
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: Open existing object: %s.\n", collection);
+
+            // get and save the replica access token
+            const auto j_in = nlohmann::json{{"fd", iRODS_handle->fd}}.dump();
+            char* j_out{};
+            nlohmann::json fd_info;
+
+            const auto ec = rc_get_file_descriptor_info(iRODS_handle->conn, j_in.data(), &j_out);
+
+            if (ec != 0) {
+                char *error_str;
+                error_str = globus_common_create_string("Failed to retrieve remote L1 descriptor information from iRODS, error_code = %d\n", ec);
+                result = globus_l_gfs_iRODS_make_error(error_str, ec);
+                free(error_str);
+                error_str = nullptr;
+                globus_gridftp_server_finished_transfer(op, result);
+                return;
+            }
+
+            fd_info = nlohmann::json::parse(j_out);
+            std::string replica_token = fd_info.at("replica_token").get<std::string>();
+            iRODS_handle->replica_token = strdup(replica_token.c_str());
         }
         else
         {
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: Creating file succeeded. File created: %s.\n", collection);
+            //create the obj
+            memset (&dataObjInp, 0, sizeof (dataObjInp));
+            memset (&dataObjWriteInp, 0, sizeof (dataObjWriteInp));
+            rstrcpy (dataObjInp.objPath, collection, MAX_NAME_LEN);
+            dataObjInp.dataSize = 0;
+            // set operation type to PUT, otherwise acPostProcForPut rules will not fire through GridFTP uploads.
+            //dataObjInp.oprType = PUT_OPR;
+            addKeyVal (&dataObjInp.condInput, FORCE_FLAG_KW, "");
+            // give priority to explicit resource mapping, otherwise use default resource if set
+            if (iRODS_Resource_struct.resource != nullptr)
+            {
+                addKeyVal (&dataObjInp.condInput, DEST_RESC_NAME_KW, iRODS_Resource_struct.resource);
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: Creating file with resource: %s\n", iRODS_Resource_struct.resource);
+            } else if (iRODS_handle->defResource != nullptr ) {
+                addKeyVal (&dataObjInp.condInput, DEST_RESC_NAME_KW, iRODS_handle->defResource);
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: Creating file with default resource: %s\n", iRODS_handle->defResource);
+            }
+            iRODS_handle->fd = rcDataObjCreate (iRODS_handle->conn, &dataObjInp);
+            if (iRODS_handle->fd < 0) {
+                result = globus_l_gfs_iRODS_make_error("rcDataObjCreate failed", iRODS_handle->fd);
+                globus_gridftp_server_finished_transfer(op, result);
+                return;
+            }
+            else
+            {
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: Creating file succeeded. File created: %s.\n", collection);
+
+                // get and save the replica access token
+                const auto j_in = nlohmann::json{{"fd", iRODS_handle->fd}}.dump();
+                char* j_out{};
+                nlohmann::json fd_info;
+
+                const auto ec = rc_get_file_descriptor_info(iRODS_handle->conn, j_in.data(), &j_out);
+
+                if (ec != 0) {
+                    char *error_str;
+                    error_str = globus_common_create_string("Failed to retrieve remote L1 descriptor information from iRODS, error_code = %d\n", ec);
+                    result = globus_l_gfs_iRODS_make_error(error_str, ec);
+                    free(error_str);
+                    error_str = nullptr;
+                    globus_gridftp_server_finished_transfer(op, result);
+                    return;
+                }
+
+                fd_info = nlohmann::json::parse(j_out);
+                std::string replica_token = fd_info.at("replica_token").get<std::string>();
+                iRODS_handle->replica_token = strdup(replica_token.c_str());
+            }
         }
+
+        /* reset all the needed variables in the handle */
+
+        iRODS_handle->cached_res = GLOBUS_SUCCESS;
+        iRODS_handle->outstanding = 0;
+        iRODS_handle->done = GLOBUS_FALSE;
+        iRODS_handle->blk_length = 0;
+        iRODS_handle->blk_offset = 0;
+        iRODS_handle->op = op;
+        globus_gridftp_server_get_block_size(
+            op, &iRODS_handle->block_size);
+
     }
-
-    free(collection);
-
-    iRODS_handle = (globus_l_gfs_iRODS_handle_t *) user_arg;
-    /* reset all the needed variables in the handle */
-    iRODS_handle->cached_res = GLOBUS_SUCCESS;
-    iRODS_handle->outstanding = 0;
-    iRODS_handle->done = GLOBUS_FALSE;
-    iRODS_handle->blk_length = 0;
-    iRODS_handle->blk_offset = 0;
-    iRODS_handle->op = op;
-    globus_gridftp_server_get_block_size(
-        op, &iRODS_handle->block_size);
 
     globus_gridftp_server_begin_transfer(op, 0, iRODS_handle);
 
-    globus_mutex_lock(&iRODS_handle->mutex);
+    // start number_of_irods_write_threads threads to read from circular buffer and write to iRODS
+    for (int thr_id = 0; thr_id < number_of_irods_write_threads; ++thr_id)
     {
-        finish = globus_l_gfs_iRODS_read_from_net(iRODS_handle);
-    }
-    globus_mutex_unlock(&iRODS_handle->mutex);
 
-    if(finish)
+        irods::thread_pool::post(threads, [&iRODS_handle, op, thr_id, collection] () {
+
+
+            rcComm_t * conn = nullptr;
+            globus_result_t result;
+
+
+            std::stringstream write_thread_id_ss;
+            write_thread_id_ss << "write thread (" << thr_id << ")";
+
+            if (!iRODS_connect_and_login(iRODS_handle, result, conn, write_thread_id_ss.str())) {
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: thread %d: failed to connect.  exiting...\n", thr_id);
+                globus_mutex_lock(&iRODS_handle->mutex);
+                irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+                iRODS_handle->cached_res = result;
+                return;
+            }
+
+            // open the data object
+            dataObjInp_t dataObjInp;
+            memset(&dataObjInp, 0, sizeof(dataObjInp));
+            rstrcpy (dataObjInp.objPath, collection, MAX_NAME_LEN);
+            dataObjInp.openFlags = O_WRONLY;
+
+            // add the replica token
+            std::string replica_token;
+            {
+                globus_mutex_lock(&iRODS_handle->mutex);
+                irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+                replica_token = iRODS_handle->replica_token;
+            }
+            addKeyVal (&dataObjInp.condInput, REPLICA_TOKEN_KW, replica_token.c_str());
+
+            int irods_fd = rcDataObjOpen (conn, &dataObjInp);
+
+            if (irods_fd < 0) {
+
+                char *error_str;
+                error_str = globus_common_create_string("rcDataObjOpen failed opening '%s'\n", collection);
+                result = globus_l_gfs_iRODS_make_error(error_str, irods_fd);
+                free(error_str);
+
+                globus_mutex_lock(&iRODS_handle->mutex);
+                irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+                iRODS_handle->cached_res = result;
+
+                return;
+            }
+
+            // loop through reading from circular buffer
+            // Exit condition: When the iRODS_handle->done flag is set and the circular buffer is empty
+            // we break out of the loop
+            bool exit_condition_met = false;
+            while (true) {
+
+                read_write_buffer_t write_buffer_object;
+
+                try {
+
+                    // Do not read from circular buffer if we are done.
+                    //
+                    // Note:  In the callback we detect EOF.  The done flag is set before the
+                    //   buffer is put on the circular buffer.  The last thread which gets the done
+                    //   flag set will handle the last write.  All other threads will be waiting on this
+                    //   mutex and will detect the done flag and exit.  If the done flag has been detected
+                    //   but the circular buffer is not yet empty, threads will continue to drain the buffer.
+                    {
+                        globus_mutex_lock(&iRODS_handle->mutex);
+                        irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+
+                        if (irods_write_circular_buffer.is_empty() && iRODS_handle->done) {
+                            break;
+                        }
+                    }
+
+                    // read from circular buffer
+
+                    exit_condition_met = irods_write_circular_buffer.pop_front(write_buffer_object, [&iRODS_handle] {
+                            globus_mutex_lock(&iRODS_handle->mutex);
+                            irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+                            bool done_flag = iRODS_handle->done;
+                            return irods_write_circular_buffer.is_empty() && done_flag;
+                    } );
+
+                    if (exit_condition_met) {
+                        break;
+                    }
+
+                    openedDataObjInp_t dataObjLseekInp;
+                    memset (&dataObjLseekInp, 0, sizeof (dataObjLseekInp));
+                    dataObjLseekInp.l1descInx = irods_fd;
+                    fileLseekOut_t *dataObjLseekOut = nullptr;
+                    dataObjLseekInp.offset = write_buffer_object.offset;
+                    dataObjLseekInp.whence = SEEK_SET;
+
+                    int status = rcDataObjLseek(conn, &dataObjLseekInp, &dataObjLseekOut);
+                    // verify that it worked
+                    if(status < 0)
+                    {
+                        globus_mutex_lock(&iRODS_handle->mutex);
+                        irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+                        iRODS_handle->cached_res = globus_l_gfs_iRODS_make_error("rcDataObjLseek failed", status);
+                        iRODS_handle->done = GLOBUS_TRUE;
+                    }
+                    else
+                    {
+                       openedDataObjInp_t dataObjWriteInp;
+                       memset (&dataObjWriteInp, 0, sizeof (dataObjWriteInp));
+                       dataObjWriteInp.l1descInx = irods_fd;
+                       dataObjWriteInp.len = write_buffer_object.nbytes;
+
+                       bytesBuf_t dataObjWriteInpBBuf;
+                       dataObjWriteInpBBuf.buf = write_buffer_object.buffer;
+                       dataObjWriteInpBBuf.len = write_buffer_object.nbytes;
+
+                       int bytes_written  = rcDataObjWrite(conn, &dataObjWriteInp, &dataObjWriteInpBBuf);
+                       if (bytes_written < dataObjWriteInp.len) {
+                           // erroring on any short write instead of only bytes_written < 0
+                           globus_mutex_lock(&iRODS_handle->mutex);
+                           irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+                           iRODS_handle->cached_res = globus_l_gfs_iRODS_make_error("rcDataObjWrite failed", bytes_written);
+                           iRODS_handle->done = GLOBUS_TRUE;
+                       } else {
+                           globus_gridftp_server_update_bytes_written(op, write_buffer_object.offset, bytes_written);
+                       }
+                    }
+
+                    globus_free(write_buffer_object.buffer);
+                    write_buffer_object.buffer = nullptr;
+
+                } catch (irods::experimental::timeout_exception& e) {
+                    char * err_str = globus_common_create_string("iRODS: Error: Timeout reading from buffer.\n");
+                    {
+                        globus_mutex_lock(&iRODS_handle->mutex);
+                        irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+                        iRODS_handle->cached_res = GlobusGFSErrorGeneric(err_str);
+                        iRODS_handle->done = GLOBUS_TRUE;
+                    }
+                    free(err_str);
+                    break;
+
+                }
+            }
+
+            // close the object
+            nlohmann::json json_input{{"fd", irods_fd}};
+            json_input["update_size"] = false;
+            json_input["update_status"] = false;
+            json_input["preserve_replica_state_table"] = false;
+            const auto json_string = json_input.dump();
+            rc_replica_close(conn, json_string.c_str());
+
+            iRODS_disconnect(conn, write_thread_id_ss.str());
+        });
+    }
+
     {
-        globus_gridftp_server_finished_transfer(iRODS_handle->op, iRODS_handle->cached_res);
+        globus_mutex_lock(&iRODS_handle->mutex);
+        irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+        globus_l_gfs_iRODS_read_from_net(iRODS_handle);
     }
 
-    return;
+    threads.join();
 
-error:
-alloc_error:
-    globus_gridftp_server_finished_transfer(op, result);
+    // close the data object
+    openedDataObjInp_t dataObjCloseInp;
+    memset (&dataObjCloseInp, 0, sizeof (dataObjCloseInp));
+    dataObjCloseInp.l1descInx = iRODS_handle->fd;
+    rcDataObjClose(iRODS_handle->conn, &dataObjCloseInp);
 
-}
+    free(collection);
+    collection = nullptr;
+
+    globus_gridftp_server_finished_transfer(iRODS_handle->op, iRODS_handle->cached_res);
+
+} // globus_l_gfs_iRODS_recv
 
 /*************************************************************************
  *  send
@@ -1630,13 +2080,41 @@ alloc_error:
  *  This interface function is called when the client requests to receive
  *  a file from the server.
  *
- *  To send a file to the client the following functions will be used in roughly
+ *  To send a file to the client the following functions will be used in
  *  the presented order.  They are doced in more detail with the
  *  gridftp server documentation.
  *
  *      globus_gridftp_server_begin_transfer();
  *      globus_gridftp_server_register_write();
  *      globus_gridftp_server_finished_transfer();
+ *
+ *  Overview of flow:
+ *
+ *     - Call globus_gridftp_server_begin_transfer().
+ *
+ *     - Connect to iRODS N times and open the data object N times.  Both of these
+ *       are stored in a vector.
+ *
+ *     - Loop until done:
+ *
+ *         - Call globus_l_gfs_get_next_read_block() N times to get offset, length
+ *           for next N reads and push these onto a vector.
+ *
+ *         - N threads (including main thread) each read its offset and length from the vector
+ *           and reads data from iRODS.
+ *
+ *         - Main thread waits for other N-1 reads to finish.
+ *
+ *         - Main thread loops through N times and calls globus_gridftp_server_register_write() and
+ *           increments callback counter.
+ *             - Callback for globus_gridftp_server_register_write decrements this counter and sets
+ *               done flag when necessary.
+ *
+ *     - Terminate N threads.
+ *
+ *     - Wait for callback counter to be zero.
+ *
+ *     - Call globus_gridftp_server_finished_transfer() and cleanup (close connections and data objects).
  *
  ************************************************************************/
 extern "C"
@@ -1646,15 +2124,14 @@ globus_l_gfs_iRODS_send(
     globus_gfs_transfer_info_t *        transfer_info,
     void *                              user_arg)
 {
-    globus_bool_t                       done = GLOBUS_FALSE;
-    globus_bool_t                       finish = GLOBUS_FALSE;
-    globus_l_gfs_iRODS_handle_t *       iRODS_handle;
-    globus_result_t                     result;
-    char *                              collection;
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s called\n", __FUNCTION__);
 
-    int                                 i = 0;
-    int                                 res = -1;
+    globus_l_gfs_iRODS_handle_t *       iRODS_handle;
     char *                              handle_server;
+    globus_result_t                     result;
+    char *                              collection = nullptr;
+
+    int                                 res = -1;
     char *                              URL;
     dataObjInp_t                        dataObjInp;
 
@@ -1665,14 +2142,16 @@ globus_l_gfs_iRODS_send(
     {
         /* dont want to allow clear text so error out here */
         result = GlobusGFSErrorGeneric("iRODS DSI must be a default backend module. It cannot be an eret alone");
-        goto alloc_error;
+        globus_gridftp_server_finished_transfer(op, result);
+        return;
     }
 
     collection = strdup(transfer_info->pathname);
     if(collection == nullptr)
     {
-        result = GlobusGFSErrorGeneric("iRODS DSI: strdup failed");
-        goto alloc_error;
+        result = GlobusGFSErrorGeneric("iRODS: strdup failed");
+        globus_gridftp_server_finished_transfer(op, result);
+        return;
     }
 
     handle_server = getenv(PID_HANDLE_SERVER);
@@ -1682,6 +2161,7 @@ globus_l_gfs_iRODS_send(
         {
             // Replace original_stat_path with resolved_stat_path
             collection = str_replace(transfer_info->pathname, iRODS_handle->original_stat_path, iRODS_handle->resolved_stat_path);
+
             res = 0;
         }
         else if (iRODS_handle->original_stat_path == nullptr && iRODS_handle->resolved_stat_path == NULL)
@@ -1701,13 +2181,13 @@ globus_l_gfs_iRODS_send(
             strncpy(PID, initPID, i);
             PID[i] = '\0';
 
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: if '%s' is a PID the Handle Server '%s' will resolve it!\n", PID, handle_server);
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: if '%s' is a PID the Handle Server '%s' will resolve it!\n", PID, handle_server);
 
             // Let's try to resolve the PID
             res = manage_pid(handle_server, PID, &URL);
             if (res == 0)
             {
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: the Handle Server returned the URL: %s\n", URL);
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: the Handle Server returned the URL: %s\n", URL);
                 // Remove iRODS host from URL
                 char *s = strstr(URL, iRODS_handle->hostname);
                 if (s != nullptr)
@@ -1721,18 +2201,24 @@ globus_l_gfs_iRODS_send(
                 else
                 {
                     // Manage scenario with a returned URL pointing to a different iRODS host (report an error)
-                    char *err_str = globus_common_create_string("iRODS DSI: the Handle Server '%s' returnd the URL '%s' which is not managed by this GridFTP server which is connected through the iRODS DSI to: %s\n", handle_server, URL, iRODS_handle->hostname);
+                    char *err_str = globus_common_create_string("iRODS: the Handle Server '%s' returnd the URL '%s' "
+                            "which is not managed by this GridFTP server which is connected through the iRODS DSI to: %s\n",
+                            handle_server, URL, iRODS_handle->hostname);
+
                     result = GlobusGFSErrorGeneric(err_str);
-                    goto error;
+                    globus_free(collection);
+                    globus_gridftp_server_finished_transfer(op, result);
+                    return;
                 }
             }
             else if (res == 1)
             {
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: unable to resolve the PID with the Handle Server\n");
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: unable to resolve the PID with the Handle Server\n");
             }
             else
             {
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: unable to resolve the PID. The Handle Server returned the response code: %i\n", res);
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: unable to resolve the PID. The Handle Server returned the "
+                        "response code: %i\n", res);
             }
         }
     }
@@ -1755,42 +2241,6 @@ globus_l_gfs_iRODS_send(
         }
     }
 
-    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: retreiving '%s'\n", collection);
-    bzero (&dataObjInp, sizeof (dataObjInp));
-    rstrcpy (dataObjInp.objPath, collection, MAX_NAME_LEN);
-    // give priority to explicit resource mapping, otherwise use default resource if set
-    if (iRODS_Resource_struct.resource != nullptr)
-    {
-        addKeyVal (&dataObjInp.condInput, RESC_NAME_KW, iRODS_Resource_struct.resource);
-        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: retriving object with resource: %s\n", iRODS_Resource_struct.resource);
-    }
-    else if (iRODS_handle->defResource != nullptr ) {
-        addKeyVal (&dataObjInp.condInput, RESC_NAME_KW, iRODS_handle->defResource);
-        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS DSI: retrieving object from default resource: %s\n", iRODS_handle->defResource);
-    };
-
-    iRODS_handle->fd = rcDataObjOpen (iRODS_handle->conn, &dataObjInp);
-
-    if (iRODS_handle->fd < 0) {
-        char *error_str;
-        if (handle_server != nullptr)
-            if (res == 0) {
-                error_str = globus_common_create_string("rcDataObjOpen failed opening '%s' (the DSI has succesfully resolved the PID through the Handle Server '%s.)", collection, handle_server);
-            }
-            else
-            {
-                error_str = globus_common_create_string("rcDataObjOpen failed opening '%s' (the DSI has also tryed to manage the path as a PID but the resolution through the Handle Server '%s' failed)", collection, handle_server);
-            }
-        else
-        {
-            error_str = globus_common_create_string("rcDataObjOpen failed opening '%s'\n", collection);
-        }
-        result = globus_l_gfs_iRODS_make_error(error_str, iRODS_handle->fd);
-        free(error_str);
-        goto error;
-    }
-    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: rcDataObjOpen: %s\n", collection);
-
     /* reset all the needed variables in the handle */
     iRODS_handle->read_eof = GLOBUS_FALSE;
     iRODS_handle->cached_res = GLOBUS_SUCCESS;
@@ -1804,40 +2254,336 @@ globus_l_gfs_iRODS_send(
     globus_gridftp_server_get_block_size(
         op, &iRODS_handle->block_size);
 
+    int optimal_count = iRODS_handle->optimal_count;
+
+    // set up N threads to read from iRODS
+    // if N=1 then only the main thread will be active
+    int number_of_irods_read_threads = iRODS_handle->number_of_irods_read_write_threads;
+    irods::thread_pool irods_read_threads{number_of_irods_read_threads};
+
+    // get the file size from iRODS genquery to make a better decision about # threads
+    // if the threshold is zero, do not do query and just use the number_of_irods_read_threads
+    if (iRODS_handle->irods_parallel_file_size_threshold_bytes != 0)
+    {
+        std::string logical_path{collection};
+
+        try
+        {
+            uintmax_t data_size = irods::experimental::filesystem::client::data_object_size(*(iRODS_handle->conn), logical_path);
+
+            if (data_size < iRODS_handle->irods_parallel_file_size_threshold_bytes)
+            {
+                // override the number of read threads
+                number_of_irods_read_threads = 1;
+            }
+
+        } catch (...) {} // keep number of read threads as is
+
+    }
+
+    // create a vector for the thread connections
+    std::vector<rcComm_t*> conn_vector(number_of_irods_read_threads);
+    std::vector<int> fd_vector(number_of_irods_read_threads);
+
     globus_gridftp_server_begin_transfer(op, 0, iRODS_handle);
 
-    globus_mutex_lock(&iRODS_handle->mutex);
-    {
+    // cleanup at scope exit
+    irods::at_scope_exit cleanup_and_finalize{[&iRODS_handle, &conn_vector, &fd_vector, op, collection, number_of_irods_read_threads] {
 
-        for(i = 0; i < iRODS_handle->optimal_count && !done; i++)
+        // close the replicas, main thread closes at destroy()
+        for (int thr_id = 1; thr_id < number_of_irods_read_threads; ++thr_id)
         {
-            globus_l_gfs_iRODS_read_ahead_next(iRODS_handle);
-            done = globus_l_gfs_iRODS_send_next_to_client(iRODS_handle);
+            if (conn_vector[thr_id])
+            {
+                std::stringstream irods_read_thread_ss;
+                irods_read_thread_ss << "irods read thread (" << thr_id << ")";
+
+                // close the object and disconnect this thread from iRODS
+                nlohmann::json json_input{{"fd", fd_vector[thr_id]}};
+                json_input["update_size"] = false;
+                json_input["update_status"] = false;
+                json_input["preserve_replica_state_table"] = false;
+                const auto json_string = json_input.dump();
+                rc_replica_close(conn_vector[thr_id], json_string.c_str());
+
+                iRODS_disconnect(conn_vector[thr_id], irods_read_thread_ss.str());
+            }
         }
-        for(i = 0; i < iRODS_handle->optimal_count && !done; i++)
+
+        globus_result_t result;
+        globus_mutex_lock(&iRODS_handle->mutex);
+        result = iRODS_handle->cached_res;
+        globus_mutex_unlock(&iRODS_handle->mutex);
+
+        globus_gridftp_server_finished_transfer(op, result);
+
+        if (collection)
         {
-            globus_l_gfs_iRODS_read_ahead_next(iRODS_handle);
+            globus_free(collection);
         }
-        if(done && iRODS_handle->outstanding == 0 &&
-            globus_fifo_empty(&iRODS_handle->rh_q))
+
+    }};
+
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: retrieving '%s'\n", collection);
+    memset(&dataObjInp, 0, sizeof (dataObjInp));
+    rstrcpy (dataObjInp.objPath, collection, MAX_NAME_LEN);
+    dataObjInp.openFlags = O_RDONLY;
+
+    // give priority to explicit resource mapping, otherwise use default resource if set
+    if (iRODS_Resource_struct.resource != nullptr)
+    {
+        addKeyVal (&dataObjInp.condInput, RESC_NAME_KW, iRODS_Resource_struct.resource);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: retrieving object with resource: %s\n", iRODS_Resource_struct.resource);
+    }
+    else if (iRODS_handle->defResource != nullptr ) {
+        addKeyVal (&dataObjInp.condInput, RESC_NAME_KW, iRODS_handle->defResource);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: retrieving object from default resource: %s\n", iRODS_handle->defResource);
+    };
+
+    // main thread open the data object, all others will open with the replica access token
+    iRODS_handle->fd = rcDataObjOpen (iRODS_handle->conn, &dataObjInp);
+    if (iRODS_handle->fd < 3) {
+
+        globus_mutex_lock(&iRODS_handle->mutex);
+
+        char *error_str;
+        error_str = globus_common_create_string("rcDataObjOpen returned an invalid file descriptor = %d\n", iRODS_handle->fd);
+        iRODS_handle->cached_res = globus_l_gfs_iRODS_make_error(error_str, iRODS_handle->fd);
+        free(error_str);
+        iRODS_handle->done = true;
+
+        globus_mutex_unlock(&iRODS_handle->mutex);
+
+        return;
+    }
+
+    // populate conn_vector[0] and fd_vector[0] with main thread info
+    conn_vector[0] = iRODS_handle->conn;
+    fd_vector[0] = iRODS_handle->fd;
+
+    // create N-1 connections and open file N times
+    for (int thr_id = 1; thr_id < number_of_irods_read_threads; ++thr_id)
+    {
+        globus_result_t result;
+
+        std::stringstream irods_read_thread_ss;
+        irods_read_thread_ss << "irods read thread (" << thr_id << ")";
+
+        if (!iRODS_connect_and_login(iRODS_handle, result, conn_vector[thr_id], irods_read_thread_ss.str()))
         {
-            finish = GLOBUS_TRUE;
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: thread %d: failed to connect.  exiting...\n", thr_id);
+            iRODS_handle->done = true;
+
+            globus_mutex_lock(&iRODS_handle->mutex);
+            irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+            iRODS_handle->cached_res = result;
+            return;
+        }
+
+        dataObjInp_t dataObjInp{};
+        dataObjInp.openFlags = O_RDONLY;
+        rstrcpy (dataObjInp.objPath, collection, MAX_NAME_LEN);
+        fd_vector[thr_id] = rcDataObjOpen(conn_vector[thr_id], &dataObjInp);
+
+        if (fd_vector[thr_id] < 0)
+        {
+            char *error_str;
+            if (handle_server != nullptr)
+                if (res == 0) {
+                    error_str = globus_common_create_string("rcDataObjOpen failed opening '%s' (the DSI has succesfully resolved the PID "
+                            "through the Handle Server '%s.)", collection, handle_server);
+                }
+                else
+                {
+                    error_str = globus_common_create_string("rcDataObjOpen failed opening '%s' (the DSI has also tried to manage the path "
+                            "as a PID but the resolution through the Handle Server '%s' failed)", collection, handle_server);
+                }
+            else
+            {
+                error_str = globus_common_create_string("rcDataObjOpen failed opening '%s'\n", collection);
+            }
+            result = globus_l_gfs_iRODS_make_error(error_str, iRODS_handle->fd);
+            free(error_str);
+            error_str = nullptr;
+            {
+                globus_mutex_lock(&iRODS_handle->mutex);
+                irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+                iRODS_handle->done = true;
+                iRODS_handle->cached_res = result;
+            }
         }
     }
-    globus_mutex_unlock(&iRODS_handle->mutex);
-    if(finish)
+
+    if (iRODS_handle->cached_res != GLOBUS_SUCCESS)
     {
-        globus_gridftp_server_finished_transfer(op, iRODS_handle->cached_res);
+        return;
     }
 
-    globus_free(collection);
+    std::vector<read_write_buffer_t> irods_read_buffer_vector;
+
+    std::condition_variable task_done_cv;
+    std::mutex task_done_mutex;
+
+    // keep reading from iRODS until the done flag is set
+    while (true)
+    {
+
+        // to keep track of read task completions
+        int task_done_cntr = 0;
+
+        // read the next N offsets
+        for (int i = 0; i < number_of_irods_read_threads; ++i)
+        {
+            globus_off_t offset;
+            globus_size_t read_length;
+            globus_l_gfs_get_next_read_block(offset, read_length, iRODS_handle);
+            irods_read_buffer_vector.push_back({nullptr, read_length, offset});
+        }
+
+        // each thread seeks to offset and reads their buffer (main thread is thr_id 0)
+        for (int thr_id = 1; thr_id < number_of_irods_read_threads; ++thr_id)
+        {
+
+            // conn_vector and fd_vector do not have main thread's
+            rcComm_t * conn = conn_vector[thr_id];
+            int irods_fd = fd_vector[thr_id];
+
+            irods::thread_pool::post(irods_read_threads, [&iRODS_handle, &irods_read_buffer_vector, &task_done_mutex,
+                    &task_done_cntr, &task_done_cv, conn, irods_fd, thr_id] ()
+            {
+
+                seek_and_read(iRODS_handle, irods_read_buffer_vector, thr_id, conn, irods_fd);
+
+                {
+                    std::lock_guard<std::mutex> lk(task_done_mutex);
+                    task_done_cntr++;
+                }
+                task_done_cv.notify_all();
+            });
+        }
+
+        // main thread also seeks and reads
+        seek_and_read(iRODS_handle, irods_read_buffer_vector, 0, conn_vector[0], fd_vector[0]);
+
+        // wait for all tasks to be completed (main thread is already done and doesn't increment task_done_cntr
+        std::unique_lock<std::mutex> lk(task_done_mutex);
+        task_done_cv.wait(lk, [&task_done_cntr, number_of_irods_read_threads]() { return task_done_cntr == number_of_irods_read_threads - 1; });
+
+        // break if done or an error occurred
+        {
+            globus_mutex_lock(&iRODS_handle->mutex);
+            irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+            if (iRODS_handle->cached_res != GLOBUS_SUCCESS)
+            {
+                break;
+            }
+        }
+
+        // grab all buffers and send to globus_gridftp_server_register_write
+        for (int i = 0; i < number_of_irods_read_threads; ++i)
+        {
+
+            // grab the buffer object, copy to globus_l_iRODS_read_ahead_t and send to register_write
+            globus_l_iRODS_read_ahead_t *read_ahead_buffer = (globus_l_iRODS_read_ahead_t*)globus_malloc(sizeof(globus_l_iRODS_read_ahead_t));
+            if (read_ahead_buffer == nullptr)
+            {
+                globus_mutex_lock(&iRODS_handle->mutex);
+                irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+
+                iRODS_handle->cached_res = GlobusGFSErrorGeneric("malloc failed");
+                break;
+            }
+
+            read_write_buffer_t& buffer_object = irods_read_buffer_vector[i];
+
+            if (buffer_object.nbytes > 0 && buffer_object.buffer != nullptr)
+            {
+                read_ahead_buffer->iRODS_handle = iRODS_handle;
+                read_ahead_buffer->offset = buffer_object.offset;
+                read_ahead_buffer->length = buffer_object.nbytes;
+                read_ahead_buffer->buffer = buffer_object.buffer;
+
+                globus_result_t res;
+
+                // wait until there are less than optimal_count outstanding callbacks
+                using namespace std::chrono_literals;
+                auto now = std::chrono::system_clock::now();
+                std::unique_lock<std::mutex> lk(outstanding_cntr_mutex);
+
+                // wait until the number of outstanding is less than optimal_count so as to not
+                // having too many outstanding callbacks
+                if (!outstanding_cntr_cv.wait_until(lk, now + 30s, [&iRODS_handle, optimal_count](){ return iRODS_handle->outstanding < optimal_count; }))
+                {
+                    char * err_str;
+                    err_str = globus_common_create_string("iRODS: Error: timeout waiting for callbacks to free before "
+                            "sending to globus_gridftp_server_register_write.\n");
+
+                    iRODS_handle->cached_res = GlobusGFSErrorGeneric(err_str);
+                    free(err_str);
+                }
+
+
+                //globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "%s:%d (%s) register_write offset=%ld, nbytes=%ld, buffer=%p\n",
+                //        __FILE__, __LINE__, __FUNCTION__,buffer_object.offset, buffer_object.nbytes, buffer_object.buffer);
+
+                res = globus_gridftp_server_register_write(
+                    iRODS_handle->op, buffer_object.buffer, buffer_object.nbytes, buffer_object.offset, -1,
+                    globus_l_gfs_net_write_cb, read_ahead_buffer);
+
+                if (res != GLOBUS_SUCCESS)
+                {
+
+                    globus_mutex_lock(&iRODS_handle->mutex);
+                    irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+
+                    iRODS_handle->cached_res = res;
+                    break;
+                }
+
+                globus_mutex_lock(&iRODS_handle->mutex);
+                irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+                iRODS_handle->outstanding++;
+
+            }
+        }
+
+        // break if done or an error occurred
+        {
+            globus_mutex_lock(&iRODS_handle->mutex);
+            irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+            if (iRODS_handle->done || iRODS_handle->cached_res != GLOBUS_SUCCESS)
+            {
+                break;
+            }
+        }
+
+        irods_read_buffer_vector.clear();
+
+    } // end while (true)
+
+    // wait for callbacks to complete
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: waiting for callbacks to complete\n");
+    using namespace std::chrono_literals;
+    auto now = std::chrono::system_clock::now();
+    std::unique_lock<std::mutex> lk(outstanding_cntr_mutex);
+    if (!outstanding_cntr_cv.wait_until(lk, now + 30s, [&iRODS_handle](){ return iRODS_handle->outstanding == 0; }))
+    {
+        char * err_str;
+        err_str = globus_common_create_string("iRODS: Error: timeout waiting for callbacks to finish.\n");
+        iRODS_handle->cached_res = GlobusGFSErrorGeneric(err_str);
+        free(err_str);
+    }
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: callbacks completed\n");
+
+    // close the data object
+    openedDataObjInp_t dataObjCloseInp;
+    memset (&dataObjCloseInp, 0, sizeof (dataObjCloseInp));
+    dataObjCloseInp.l1descInx = iRODS_handle->fd;
+    rcDataObjClose(iRODS_handle->conn, &dataObjCloseInp);
+
     return;
 
-error:
-    globus_free(collection);
-alloc_error:
-    globus_gridftp_server_finished_transfer(op, result);
-}
+} // end globus_l_gfs_iRODS_send
 
 /*************************************************************************
  *         logic to receive from client
@@ -1855,91 +2601,75 @@ globus_l_gfs_iRODS_net_read_cb(
     globus_bool_t                       eof,
     void *                              user_arg)
 {
-    globus_bool_t                       finished = GLOBUS_FALSE;
     globus_l_gfs_iRODS_handle_t *       iRODS_handle;
-    int                                 bytes_written;
+    //int                                 bytes_written;
 
     iRODS_handle = (globus_l_gfs_iRODS_handle_t *) user_arg;
-
-    globus_mutex_lock(&iRODS_handle->mutex);
+    if(eof)
     {
-        if(eof)
-        {
-            iRODS_handle->done = GLOBUS_TRUE;
-        }
-        iRODS_handle->outstanding--;
-        if(result != GLOBUS_SUCCESS)
-        {
-            iRODS_handle->cached_res = result;
-            iRODS_handle->done = GLOBUS_TRUE;
-        }
-        /* if the read was successful write to disk */
-        else if(nbytes > 0)
-        {
-            openedDataObjInp_t dataObjLseekInp;
-            bzero (&dataObjLseekInp, sizeof (dataObjLseekInp));
-            dataObjLseekInp.l1descInx = iRODS_handle->fd;
-            fileLseekOut_t *dataObjLseekOut = nullptr;
-            dataObjLseekInp.offset = offset;
-            dataObjLseekInp.whence = SEEK_SET;
+        iRODS_handle->done = GLOBUS_TRUE;
+    }
 
-            int status = rcDataObjLseek(iRODS_handle->conn, &dataObjLseekInp, &dataObjLseekOut);
-            // verify that it worked
-            if(status < 0)
+    /* if the read was successful write to circular buffer*/
+    if (nbytes > 0)
+    {
+
+        try {
+
+            // write to circular buffer - done flags are set in the post-push lambda to avoid
+            // race conditions
+            irods_write_circular_buffer.push_back({buffer, nbytes, offset }, [&iRODS_handle, &result] {
+
+                    {
+                        globus_mutex_lock(&iRODS_handle->mutex);
+                        irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+                        iRODS_handle->outstanding--;
+                        if(result != GLOBUS_SUCCESS)
+                        {
+                            iRODS_handle->cached_res = result;
+                            iRODS_handle->done = GLOBUS_TRUE;
+                        }
+                    }
+
+
+                });  // circular buffer reader handles the done flag
+
+            // don't free buffer as it is used by threads reading the circular buffer
+
+        } catch (irods::experimental::timeout_exception& e) {
+            char * err_str;
+            GlobusGFSName(__FUNCTION__);
+            err_str = globus_common_create_string("iRODS: Error: timeout waiting to write to buffer.\n");
+
             {
-                iRODS_handle->cached_res = globus_l_gfs_iRODS_make_error("rcDataObjLseek failed", status);
+                globus_mutex_lock(&iRODS_handle->mutex);
+                irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+                iRODS_handle->cached_res = GlobusGFSErrorGeneric(err_str);
                 iRODS_handle->done = GLOBUS_TRUE;
             }
-            else
-            {
-               openedDataObjInp_t dataObjWriteInp;
-               bzero (&dataObjWriteInp, sizeof (dataObjWriteInp));
-               dataObjWriteInp.l1descInx = iRODS_handle->fd;
-               dataObjWriteInp.len = nbytes;
 
-               bytesBuf_t dataObjWriteInpBBuf;
-               dataObjWriteInpBBuf.buf = buffer;
-               dataObjWriteInpBBuf.len = nbytes;
+            free(err_str);
 
-               bytes_written  = rcDataObjWrite(iRODS_handle->conn, &dataObjWriteInp, &dataObjWriteInpBBuf); //buffer need to be casted??
-               if (bytes_written < dataObjWriteInp.len) {
-                   // erroring on any short write instead of only bytes_written < 0
-                   iRODS_handle->cached_res = globus_l_gfs_iRODS_make_error("rcDataObjWrite failed", bytes_written);
-                   iRODS_handle->done = GLOBUS_TRUE;
-               }
-               else
-               {
-                   globus_gridftp_server_update_bytes_written(op, offset, bytes_written);
-               }
-            }
         }
+    }
 
-        globus_free(buffer);
-        /* if not done just register the next one */
+    {
+        globus_mutex_lock(&iRODS_handle->mutex);
+        irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+
+        // if not done call globus_l_gfs_iRODS_read_from_net to handle more
         if(!iRODS_handle->done)
         {
-            finished = globus_l_gfs_iRODS_read_from_net(iRODS_handle);
-        }
-        /* if done and there are no outstanding callbacks finish */
-        else if(iRODS_handle->outstanding == 0)
-        {
-            openedDataObjInp_t dataObjCloseInp;
-            bzero (&dataObjCloseInp, sizeof (dataObjCloseInp));
-            dataObjCloseInp.l1descInx = iRODS_handle->fd;
-            rcDataObjClose(iRODS_handle->conn, &dataObjCloseInp);
-            finished = GLOBUS_TRUE;
+            globus_l_gfs_iRODS_read_from_net(iRODS_handle);
         }
     }
-    globus_mutex_unlock(&iRODS_handle->mutex);
 
-    if(finished)
-    {
-        globus_gridftp_server_finished_transfer(op, iRODS_handle->cached_res);
-    }
-}
+} // end globus_l_gfs_iRODS_net_read_cb
 
+// reads data from the client and populates the circular buffer
+// precondition: iRODS_handle mutex is already locked
 static
-globus_bool_t
+void
 globus_l_gfs_iRODS_read_from_net(
     globus_l_gfs_iRODS_handle_t *         iRODS_handle)
 {
@@ -1947,17 +2677,26 @@ globus_l_gfs_iRODS_read_from_net(
     globus_result_t                     result;
     GlobusGFSName(globus_l_gfs_iRODS_read_from_net);
 
-    /* in the read case tis number will vary */
+    irods::at_scope_exit cleanup_and_finalize{[&iRODS_handle, &result] {
+        if (result != GLOBUS_SUCCESS)
+        {
+            iRODS_handle->cached_res = result;
+            iRODS_handle->done = GLOBUS_TRUE;
+        }
+    }};
+
+    /* in the read case this number will vary */
     globus_gridftp_server_get_optimal_concurrency(
         iRODS_handle->op, &iRODS_handle->optimal_count);
 
+    // each time this runs, start up optimal_count - outstanding registers
     while(iRODS_handle->outstanding < iRODS_handle->optimal_count)
     {
         buffer = static_cast<unsigned char*>(globus_malloc(iRODS_handle->block_size));
-        if(buffer == nullptr)
+        if (buffer == nullptr)
         {
             result = GlobusGFSErrorGeneric("malloc failed");
-            goto error;
+            return;
         }
         result = globus_gridftp_server_register_read(
             iRODS_handle->op,
@@ -1965,30 +2704,16 @@ globus_l_gfs_iRODS_read_from_net(
             iRODS_handle->block_size,
             globus_l_gfs_iRODS_net_read_cb,
             iRODS_handle);
-        if(result != GLOBUS_SUCCESS)
+        if (result != GLOBUS_SUCCESS)
         {
-            goto alloc_error;
+            return;
         }
         iRODS_handle->outstanding++;
     }
 
-    return GLOBUS_FALSE;
+    return;
 
-alloc_error:
-    globus_free(buffer);
-error:
-    iRODS_handle->cached_res = result;
-    iRODS_handle->done = GLOBUS_TRUE;
-    if(iRODS_handle->outstanding == 0)
-    {
-        openedDataObjInp_t dataObjCloseInp;
-        bzero (&dataObjCloseInp, sizeof (dataObjCloseInp));
-        dataObjCloseInp.l1descInx = iRODS_handle->fd;
-        rcDataObjClose(iRODS_handle->conn, &dataObjCloseInp);
-        return GLOBUS_TRUE;
-    }
-    return GLOBUS_FALSE;
-}
+} // end globus_l_gfs_iRODS_read_from_net
 
 /*************************************************************************
  *         logic for sending to the client
@@ -2003,211 +2728,147 @@ globus_l_gfs_net_write_cb(
     globus_size_t                       nbytes,
     void *                              user_arg)
 {
-    globus_bool_t                       finish = GLOBUS_FALSE;
-    globus_l_gfs_iRODS_handle_t *         iRODS_handle;
-    globus_l_iRODS_read_ahead_t *         rh;
-    globus_l_iRODS_read_ahead_t *         tmp_rh;
-
-    rh = (globus_l_iRODS_read_ahead_t *) user_arg;
-    iRODS_handle = rh->iRODS_handle;
-    free(rh->buffer);
-    globus_free(rh);
-
-    globus_mutex_lock(&iRODS_handle->mutex);
+    globus_l_iRODS_read_ahead_t * rh = (globus_l_iRODS_read_ahead_t *) user_arg;
+    if (rh == nullptr)
     {
+        // should not happen, recovery path is a timeout waiting on callbacks to complete
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: (%s) rh is null\n", __FUNCTION__);
+        return;
+    }
+
+    globus_l_gfs_iRODS_handle_t * iRODS_handle = rh->iRODS_handle;
+    if (iRODS_handle == nullptr)
+    {
+        // should not happen, recovery path is a timeout waiting on callbacks to complete
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: (%s) rh is null\n", __FUNCTION__);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: (%s) iRODS_handle is null\n", __FUNCTION__);
+        return;
+    }
+
+    {
+        // decrement outstanding callback counter
+        globus_mutex_lock(&iRODS_handle->mutex);
+        irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
         iRODS_handle->outstanding--;
-        if(result != GLOBUS_SUCCESS)
-        {
-            iRODS_handle->cached_res = result;
-            iRODS_handle->read_eof = GLOBUS_TRUE;
-            openedDataObjInp_t dataObjCloseInp;
-            bzero (&dataObjCloseInp, sizeof (dataObjCloseInp));
-            dataObjCloseInp.l1descInx = iRODS_handle->fd;
-            rcDataObjClose(iRODS_handle->conn, &dataObjCloseInp);
-            while(!globus_fifo_empty(&iRODS_handle->rh_q))
-            {
-                tmp_rh = (globus_l_iRODS_read_ahead_t *)
-                    globus_fifo_dequeue(&iRODS_handle->rh_q);
-                free(rh->buffer);
-                globus_free(tmp_rh);
-            }
-        }
-        else
-        {
-            globus_l_gfs_iRODS_send_next_to_client(iRODS_handle);
-            globus_l_gfs_iRODS_read_ahead_next(iRODS_handle);
-        }
-        /* if done and there are no outstanding callbacks finish */
-        if(iRODS_handle->outstanding == 0 &&
-            globus_fifo_empty(&iRODS_handle->rh_q))
-        {
-            finish = GLOBUS_TRUE;
-        }
     }
-    globus_mutex_unlock(&iRODS_handle->mutex);
+    outstanding_cntr_cv.notify_all();
 
-    if(finish)
+    if (result != GLOBUS_SUCCESS)
     {
-        globus_gridftp_server_finished_transfer(op, iRODS_handle->cached_res);
+        // set done flag
+        globus_mutex_lock(&iRODS_handle->mutex);
+        irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+        iRODS_handle->cached_res = result;
+        iRODS_handle->done = GLOBUS_TRUE;
     }
-}
 
-static
-globus_bool_t
-globus_l_gfs_iRODS_send_next_to_client(
-    globus_l_gfs_iRODS_handle_t *         iRODS_handle)
-{
-    globus_l_iRODS_read_ahead_t *         rh;
-    globus_result_t                     res;
-    GlobusGFSName(globus_l_gfs_iRODS_send_next_to_client);
-
-    rh = (globus_l_iRODS_read_ahead_t *) globus_fifo_dequeue(&iRODS_handle->rh_q);
-    if(rh == nullptr)
+    if (rh->buffer)
     {
-        goto error;
+        free(rh->buffer);
     }
-
-    res = globus_gridftp_server_register_write(
-        iRODS_handle->op, rh->buffer, rh->length, rh->offset, -1,
-        globus_l_gfs_net_write_cb, rh);
-    if(res != GLOBUS_SUCCESS)
-    {
-        goto alloc_error;
-    }
-    iRODS_handle->outstanding++;
-    return GLOBUS_FALSE;
-
-alloc_error:
     globus_free(rh);
-
-    iRODS_handle->cached_res = res;
-    if(!iRODS_handle->read_eof)
-    {
-        openedDataObjInp_t dataObjCloseInp;
-        bzero (&dataObjCloseInp, sizeof (dataObjCloseInp));
-        dataObjCloseInp.l1descInx = iRODS_handle->fd;
-        rcDataObjClose(iRODS_handle->conn, &dataObjCloseInp);
-        iRODS_handle->read_eof = GLOBUS_TRUE;
-    }
-    /* if we get an error here we need to flush the q */
-    while(!globus_fifo_empty(&iRODS_handle->rh_q))
-    {
-        rh = (globus_l_iRODS_read_ahead_t *)
-            globus_fifo_dequeue(&iRODS_handle->rh_q);
-        globus_free(rh);
-    }
-
-error:
-    return GLOBUS_TRUE;
 }
 
 static
 void
-globus_l_gfs_iRODS_read_ahead_next(
-    globus_l_gfs_iRODS_handle_t *         iRODS_handle)
-{
-    int                                 read_length;
-    globus_result_t                     result;
-    globus_l_iRODS_read_ahead_t *         rh;
-    GlobusGFSName(globus_l_gfs_iRODS_read_ahead_next);
+seek_and_read(
+        globus_l_gfs_iRODS_handle_t *iRODS_handle,
+        std::vector<read_write_buffer_t>& irods_read_buffer_vector,
+        int thr_id,
+        rcComm_t *conn,
+        int irods_fd) {
 
-    bool error = false, attempt_error = false;
+    openedDataObjInp_t dataObjLseekInp;
+    memset (&dataObjLseekInp, 0, sizeof (dataObjLseekInp));
+    dataObjLseekInp.l1descInx = irods_fd;
+    dataObjLseekInp.offset = static_cast<long>(irods_read_buffer_vector[thr_id].offset);
+    dataObjLseekInp.whence = SEEK_SET;
+    fileLseekOut_t *dataObjLseekOut = nullptr;
 
-    if(iRODS_handle->read_eof)
+    int status = rcDataObjLseek(conn, &dataObjLseekInp, &dataObjLseekOut);
+
+    // verify that it worked
+    if (status < 0)
     {
-        error = true;
-    }
+        globus_mutex_lock(&iRODS_handle->mutex);
+        irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+        iRODS_handle->done = GLOBUS_TRUE;
+    } else {
 
-    if (!error) {
+        openedDataObjInp_t dataObjReadInp;
+        memset (&dataObjReadInp, 0, sizeof (dataObjReadInp));
+        dataObjReadInp.l1descInx = irods_fd;
+        dataObjReadInp.len = irods_read_buffer_vector[thr_id].nbytes;
+
+        bytesBuf_t dataObjReadOutBBuf;
+        memset (&dataObjReadOutBBuf, 0, sizeof (dataObjReadOutBBuf));
+
+        auto nbytes = rcDataObjRead (conn, &dataObjReadInp, &dataObjReadOutBBuf);
+
+        globus_mutex_lock(&iRODS_handle->mutex);
+        irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+
+        if (nbytes > 0)
+        {
+            irods_read_buffer_vector[thr_id].buffer = static_cast<globus_byte_t *>(dataObjReadOutBBuf.buf);
+            irods_read_buffer_vector[thr_id].nbytes = nbytes;
+        } else {
+            irods_read_buffer_vector[thr_id].buffer = nullptr;
+            irods_read_buffer_vector[thr_id].nbytes = 0;
+            iRODS_handle->done = GLOBUS_TRUE;
+        }
+    }
+}
+
+// returns true if done
+static
+void
+globus_l_gfs_get_next_read_block(
+        globus_off_t&                offset,
+        globus_size_t&               read_length,
+        globus_l_gfs_iRODS_handle_t* iRODS_handle)
+{
+    GlobusGFSName(globus_l_gfs_get_next_read_block);
+    {
+        globus_mutex_lock(&iRODS_handle->mutex);
+        irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+
         /* if we have done everything for this block, get the next block
            also this will happen the first time
            -1 length means until the end of the file  */
-
         if(iRODS_handle->blk_length == 0)
         {
-            /* check the next range to read */
+            // check the next range to read
+            // returns a length of 0 when done
             globus_gridftp_server_get_read_range(
                 iRODS_handle->op,
                 &iRODS_handle->blk_offset,
                 &iRODS_handle->blk_length);
+
             if(iRODS_handle->blk_length == 0)
             {
-                result = GLOBUS_SUCCESS;
-                error = true;
+                iRODS_handle->read_eof = GLOBUS_TRUE;
             }
         }
 
-        if (!error) {
-            /* get the current length to read */
-            if(iRODS_handle->blk_length == -1 || iRODS_handle->blk_length > static_cast<globus_off_t>(iRODS_handle->block_size))
-            {
-                read_length = (int)iRODS_handle->block_size;
-            }
-            else
-            {
-                read_length = (int)iRODS_handle->blk_length;
-            }
-            rh = (globus_l_iRODS_read_ahead_t *) calloc(1,
-                sizeof(globus_l_iRODS_read_ahead_t)+read_length);
-            rh->offset = iRODS_handle->blk_offset;
-            rh->iRODS_handle = iRODS_handle;
-
-            openedDataObjInp_t dataObjLseekInp;
-            bzero (&dataObjLseekInp, sizeof (dataObjLseekInp));
-            dataObjLseekInp.l1descInx = iRODS_handle->fd;
-            fileLseekOut_t *dataObjLseekOut = nullptr;
-            dataObjLseekInp.offset = (long)iRODS_handle->blk_offset;
-            dataObjLseekInp.whence = SEEK_SET;
-
-            int status = rcDataObjLseek(iRODS_handle->conn, &dataObjLseekInp, &dataObjLseekOut);
-            // verify that it worked
-            if(status < 0)
-            {
-                result = globus_l_gfs_iRODS_make_error("rcDataObjLseek failed", status);
-                attempt_error = true;
-            }
-
-            if (!attempt_error) {
-                openedDataObjInp_t dataObjReadInp;
-                bzero (&dataObjReadInp, sizeof (dataObjReadInp));
-                dataObjReadInp.l1descInx = iRODS_handle->fd;
-                dataObjReadInp.len = read_length;
-
-                bytesBuf_t dataObjReadOutBBuf;
-                bzero (&dataObjReadOutBBuf, sizeof (dataObjReadOutBBuf));
-
-                rh->length = rcDataObjRead (iRODS_handle->conn, &dataObjReadInp, &dataObjReadOutBBuf);
-                if(rh->length <= 0)
-                {
-                    result = GLOBUS_SUCCESS; /* this may just be eof */
-                    attempt_error = true;
-                }
-
-                if (!attempt_error) {
-                    rh->buffer =  (globus_byte_t *)dataObjReadOutBBuf.buf;
-                    iRODS_handle->blk_offset += rh->length;
-                    if(iRODS_handle->blk_length != -1)
-                    {
-                        iRODS_handle->blk_length -= rh->length;
-                    }
-
-                    globus_fifo_enqueue(&iRODS_handle->rh_q, rh);
-                    return;
-                }
-            }
+        /* get the current length to read */
+        if(iRODS_handle->blk_length == -1 || iRODS_handle->blk_length > static_cast<globus_off_t>(iRODS_handle->block_size))
+        {
+            read_length = (int)iRODS_handle->block_size;
+        } else {
+            read_length = (int)iRODS_handle->blk_length;
         }
-    }
 
-    if (attempt_error) {
-        globus_free(rh);
-        openedDataObjInp_t dataObjCloseInp;
-        bzero (&dataObjCloseInp, sizeof (dataObjCloseInp));
-        dataObjCloseInp.l1descInx = iRODS_handle->fd;
-        rcDataObjClose(iRODS_handle->conn, &dataObjCloseInp);
-        iRODS_handle->cached_res = result;
-    }
+        offset = iRODS_handle->blk_offset;
 
-    iRODS_handle->read_eof = GLOBUS_TRUE;
+        // for the next thread/pass
+        iRODS_handle->blk_offset += read_length;
+        if(iRODS_handle->blk_length != -1)
+        {
+            iRODS_handle->blk_length -= read_length;
+        }
+
+    }
 }
 
 extern "C"
