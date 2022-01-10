@@ -24,7 +24,6 @@
 cmake_minimum_required (VERSION 3.11 FATAL_ERROR)
 
 find_package(IRODS 4.2.11 EXACT REQUIRED CONFIG)
-
 set(IRODS_CLIENT_REVISION "0")
 set(IRODS_CLIENT_VERSION "${IRODS_VERSION}.${IRODS_CLIENT_REVISION}")
 
@@ -122,6 +121,7 @@ set(irods_include_path_list
     ${IRODS_INCLUDE_DIRS}
     ${IRODS_EXTERNALS_FULLPATH_BOOST}/include
     ${IRODS_EXTERNALS_FULLPATH_JSON}/include
+    ${IRODS_EXTERNALS_FULLPATH_FMT}/include
     )
 
 set(irods_link_obj_path
@@ -136,6 +136,7 @@ set(irods_link_obj_path
     "${IRODS_EXTERNALS_FULLPATH_BOOST}/lib/libboost_regex.so"
     "${IRODS_EXTERNALS_FULLPATH_BOOST}/lib/libboost_thread.so"
     "${IRODS_EXTERNALS_FULLPATH_BOOST}/lib/libboost_filesystem.so"
+    "${IRODS_EXTERNALS_FULLPATH_FMT}/lib/libfmt.so"
     "/${IRODS_PLUGINS_DIRECTORY}/network/libtcp_client.so"
     "/${IRODS_PLUGINS_DIRECTORY}/network/libssl_client.so"
     "/${IRODS_PLUGINS_DIRECTORY}/auth/libnative_client.so"
