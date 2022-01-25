@@ -137,6 +137,7 @@ typedef struct cksum_thread_args
     bool                    *done_flag;
     globus_gfs_operation_t  *op;
     pthread_mutex_t         *mutex;
+    pthread_cond_t          *cond;
     int                     *update_interval;
     size_t                  *bytes_processed;
 } cksum_thread_args_t;
@@ -1294,38 +1295,29 @@ globus_result_t globus_l_gfs_iRODS_realpath(
 
 void *send_cksum_updates(void *args)
 {
-    time_t last_update_time = time(0);
-    time_t now = time(0);
-
     cksum_thread_args_t *cksum_args = (cksum_thread_args_t*)args;
 
     // get update interval from server, locking for "op" although not necessary right now
 
+    pthread_mutex_lock(cksum_args->mutex);
+    irods::at_scope_exit unlock_mutex{[&cksum_args] { pthread_mutex_unlock(cksum_args->mutex); }};
     while (true) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += *cksum_args->update_interval;
 
-        pthread_mutex_lock(cksum_args->mutex);
+        // wait for the update interval or until signaled
+        pthread_cond_timedwait(cksum_args->cond, cksum_args->mutex, &ts);
 
-        bool break_out = *cksum_args->done_flag;
-
-        // send op
-        if (!break_out && now - last_update_time > *cksum_args->update_interval) {
-
-            // send update with globus_gridftp_server_intermediate_command
-            char size_t_str[32];
-            snprintf(size_t_str, 32, "%zu", *cksum_args->bytes_processed);
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: calling globus_gridftp_server_intermediate_command with %s\n", size_t_str);
-            globus_gridftp_server_intermediate_command(*cksum_args->op, GLOBUS_SUCCESS, size_t_str);
-            last_update_time = time(0);
-        }
-
-        pthread_mutex_unlock(cksum_args->mutex);
-
-        if (break_out) {
+        if (*cksum_args->done_flag) {
             break;
         }
 
-        sleep(1);
-        now = time(0);
+        // cksm not done, send update with globus_gridftp_server_intermediate_command
+        char size_t_str[32];
+        snprintf(size_t_str, 32, "%zu", *cksum_args->bytes_processed);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: calling globus_gridftp_server_intermediate_command with %s\n", size_t_str);
+        globus_gridftp_server_intermediate_command(*cksum_args->op, GLOBUS_SUCCESS, size_t_str);
     }
 
     return nullptr;
@@ -1393,6 +1385,7 @@ globus_l_gfs_iRODS_command(
     pthread_t update_thread;
     bool checksum_done_flag = false;
     pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+    pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
     size_t checksum_bytes_processed = 0;
 
     switch(cmd_info->command)
@@ -1460,7 +1453,7 @@ globus_l_gfs_iRODS_command(
                if (update_interval > 0) {
 
                    // client requested periodic updates
-                   cksum_thread_args_t cksum_args = {&checksum_done_flag, &op, &mutex, &update_interval, &checksum_bytes_processed};
+                   cksum_thread_args_t cksum_args = {&checksum_done_flag, &op, &mutex, &cond, &update_interval, &checksum_bytes_processed};
 
                    int result;
                    if ((result = pthread_create(&update_thread, nullptr, send_cksum_updates, &cksum_args)) != 0) {
@@ -1667,6 +1660,7 @@ globus_l_gfs_iRODS_command(
             pthread_mutex_lock(&mutex);
             irods::at_scope_exit unlock_mutex{[&mutex] { pthread_mutex_unlock(&mutex); }};
             checksum_done_flag = true;
+            pthread_cond_signal(&cond);
         }
 
         if (pthread_join(update_thread, nullptr) != 0) {
