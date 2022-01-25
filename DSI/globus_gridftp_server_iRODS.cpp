@@ -1304,7 +1304,6 @@ void *send_cksum_updates(void *args)
     while (true) {
 
         pthread_mutex_lock(cksum_args->mutex);
-        irods::at_scope_exit unlock_mutex{[&cksum_args] { pthread_mutex_unlock(cksum_args->mutex); }};
 
         bool break_out = *cksum_args->done_flag;
 
@@ -1318,6 +1317,8 @@ void *send_cksum_updates(void *args)
             globus_gridftp_server_intermediate_command(*cksum_args->op, GLOBUS_SUCCESS, size_t_str);
             last_update_time = time(0);
         }
+
+        pthread_mutex_unlock(cksum_args->mutex);
 
         if (break_out) {
             break;
