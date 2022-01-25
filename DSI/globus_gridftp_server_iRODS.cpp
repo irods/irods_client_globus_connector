@@ -824,7 +824,7 @@ globus_l_gfs_iRODS_start(
     load_client_api_plugins();
 
     globus_l_gfs_iRODS_handle_t *       iRODS_handle;
-    globus_result_t                     result;
+    globus_result_t                     result = GLOBUS_SUCCESS;
     globus_gfs_finished_info_t          finished_info;
 
     rodsEnv myRodsEnv;
@@ -1037,7 +1037,7 @@ globus_l_gfs_iRODS_stat(
     globus_l_gfs_iRODS_handle_t *       iRODS_handle;
     char *                              handle_server;
     char *                              URL;
-    globus_result_t                     result;
+    globus_result_t                     result = GLOBUS_SUCCESS;
 
     GlobusGFSName(globus_l_gfs_iRODS_stat);
     globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s called\n", __FUNCTION__);
@@ -2674,7 +2674,7 @@ globus_l_gfs_iRODS_read_from_net(
     globus_l_gfs_iRODS_handle_t *         iRODS_handle)
 {
     globus_byte_t *                     buffer;
-    globus_result_t                     result;
+    globus_result_t                     result = GLOBUS_SUCCESS;
     GlobusGFSName(globus_l_gfs_iRODS_read_from_net);
 
     irods::at_scope_exit cleanup_and_finalize{[&iRODS_handle, &result] {
