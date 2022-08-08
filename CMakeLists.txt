@@ -23,8 +23,8 @@
 
 cmake_minimum_required (VERSION 3.11 FATAL_ERROR)
 
-find_package(IRODS 4.2.11 EXACT REQUIRED CONFIG)
-set(IRODS_CLIENT_REVISION "2")
+find_package(IRODS 4.3.0 EXACT REQUIRED CONFIG)
+set(IRODS_CLIENT_REVISION "0")
 set(IRODS_CLIENT_VERSION "${IRODS_VERSION}.${IRODS_CLIENT_REVISION}")
 
 set(IRODS_CLIENT_NAME "irods-gridftp-client")
@@ -131,7 +131,6 @@ set(irods_link_obj_path
     irods_plugin_dependencies
     "-lrt"
     "${IRODS_EXTERNALS_FULLPATH_AVRO}/lib/libavrocpp.so"
-    "${IRODS_EXTERNALS_PACKAGE_ROOT}/jansson2.7-0/lib/libjansson.so"
     "${IRODS_EXTERNALS_FULLPATH_BOOST}/lib/libboost_system.so"
     "${IRODS_EXTERNALS_FULLPATH_BOOST}/lib/libboost_regex.so"
     "${IRODS_EXTERNALS_FULLPATH_BOOST}/lib/libboost_thread.so"

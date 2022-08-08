@@ -2,7 +2,12 @@
  * SiFang
  */
 
-#include "rodsClient.h"
+#ifdef IRODS_HEADER_HPP
+  #include <irods/rodsClient.hpp>
+#else
+  #include <irods/rodsClient.h>
+#endif
+
 #include <irods_globus_base64.hpp>
 #define OK 0
 

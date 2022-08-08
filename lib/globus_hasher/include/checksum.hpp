@@ -8,7 +8,7 @@
 #include <cstdio>
 #include <ctime>
 #include <cstring>
-#include "objInfo.h"
+#include "irods/objInfo.h"
 
 #ifdef __cplusplus
 extern "C" {

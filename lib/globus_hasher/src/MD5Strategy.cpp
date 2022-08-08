@@ -6,7 +6,7 @@
 
 #include <cstring>
 #include <openssl/md5.h>
-#include "irods_stacktrace.hpp"
+#include "irods/irods_stacktrace.hpp"
 
 namespace irods::globus {
 

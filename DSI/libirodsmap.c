@@ -9,9 +9,9 @@
  */
 
 #ifdef IRODS_HEADER_HPP
-  #include "rodsClient.hpp"
+  #include "irods/rodsClient.hpp"
 #else
-  #include "rodsClient.h"
+  #include "irods/rodsClient.h"
 #endif
 #include <stdio.h>
 #include <time.h>

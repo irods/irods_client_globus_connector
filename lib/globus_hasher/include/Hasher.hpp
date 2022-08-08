@@ -2,7 +2,7 @@
 #define _HASHER_HPP_
 
 #include "HashStrategy.hpp"
-#include "irods_error.hpp"
+#include "irods/irods_error.hpp"
 
 #include <string>
 #include <boost/any.hpp>

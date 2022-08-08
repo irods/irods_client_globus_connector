@@ -31,27 +31,21 @@ extern "C" {
 //#pragma GCC diagnostic pop
 
 #ifdef IRODS_HEADER_HPP
-  #include "rodsClient.hpp"
+  #include <irods/rodsClient.hpp>
 #else
-  #include "rodsClient.h"
+  #include <irods/rodsClient.h>
 #endif
 
-#include "irods_query.hpp"
-#include "irods_string_tokenize.hpp"
-#include "irods_virtual_path.hpp"
-#include "irods_hasher_factory.hpp"
-#include "irods_at_scope_exit.hpp"
-#include "get_file_descriptor_info.h"
-#include "replica_close.h"
-#include "thread_pool.hpp"
-#include "filesystem.hpp"
-#ifdef IRODS_HEADER_HPP
-  #include "rodsClient.hpp"
-#else
-  #include "rodsClient.h"
-#endif
-
-#include <irods_globus_base64.hpp>
+#include <irods/irods_query.hpp>
+#include <irods/irods_string_tokenize.hpp>
+#include <irods/irods_virtual_path.hpp>
+#include <irods_hasher_factory.hpp>
+#include <irods/irods_at_scope_exit.hpp>
+#include <irods/get_file_descriptor_info.h>
+#include <irods/replica_close.h>
+#include <irods/thread_pool.hpp>
+#include <irods/filesystem.hpp>
+#include <irods/base64.h>
 
 // boost includes
 #include <boost/algorithm/string.hpp>
@@ -786,6 +780,7 @@ iRODS_connect_and_login(
         }
     }
 
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s connected now logging in.\n", call_context_for_logging.c_str());
     status = clientLogin(conn, nullptr, NULL);
     if (status != 0) {
         result = globus_l_gfs_iRODS_make_error("\'clientLogin\' failed.", status);
@@ -889,6 +884,7 @@ globus_l_gfs_iRODS_start(
         }
         iRODS_handle->original_stat_path = nullptr;
         iRODS_handle->resolved_stat_path = nullptr;
+        iRODS_handle->first_write_done = false;
 
         //Get zone from username if it contains "#"
         char delims[] = "#";
@@ -918,7 +914,6 @@ globus_l_gfs_iRODS_start(
                 }
                 iRODS_handle->user = strdup(token);
             }
-            iRODS_handle->first_write_done = false;
         }
         free(username_to_parse);
         username_to_parse = nullptr;
@@ -1680,7 +1675,7 @@ globus_l_gfs_iRODS_command(
 
 }
 
-void run_writer_thread(
+void execute_writer_thread_operation(
         globus_l_gfs_iRODS_handle_t *   iRODS_handle,
         globus_gfs_operation_t          op,
         int                             thr_id,
@@ -1926,6 +1921,8 @@ globus_l_gfs_iRODS_recv(
 
     // start N threads to write to file
     int number_of_irods_write_threads = iRODS_handle->number_of_irods_read_write_threads;
+
+    // the main thread is the first writer so thread_pool starts number_of_irods_write_threads-1 threads
     irods::thread_pool threads{number_of_irods_write_threads-1};
 
     {
@@ -2076,11 +2073,12 @@ globus_l_gfs_iRODS_recv(
 
     globus_gridftp_server_begin_transfer(op, 0, iRODS_handle);
 
-    // start number_of_irods_write_threads threads to read from circular buffer and write to iRODS
+    // start number_of_irods_write_threads-1 threads to read from circular buffer and write to iRODS
+    // the main thread also writes to bring us to number_of_irods_write_threads threads
     for (int thr_id = 1; thr_id < number_of_irods_write_threads; ++thr_id)
     {
         irods::thread_pool::post(threads, [&iRODS_handle, op, thr_id, collection] () {
-            run_writer_thread(iRODS_handle, op, thr_id, collection);
+            execute_writer_thread_operation(iRODS_handle, op, thr_id, collection);
         });
     }
 
@@ -2092,7 +2090,7 @@ globus_l_gfs_iRODS_recv(
     });
 
     // current thread is thread 0
-    run_writer_thread(iRODS_handle, op, 0, collection);
+    execute_writer_thread_operation(iRODS_handle, op, 0, collection);
 
     read_from_net_thread.join();
     threads.join();
@@ -2635,6 +2633,7 @@ globus_l_gfs_iRODS_net_read_cb(
 {
     globus_l_gfs_iRODS_handle_t *       iRODS_handle;
     //int                                 bytes_written;
+
 
     iRODS_handle = (globus_l_gfs_iRODS_handle_t *) user_arg;
     if(eof)
