@@ -5,7 +5,7 @@
 #include "SHA512Strategy.hpp"
 #include "ADLER32Strategy.hpp"
 #include "SHA1Strategy.hpp"
-#include "rodsErrorTable.h"
+#include "irods/rodsErrorTable.h"
 #include <sstream>
 #include <boost/unordered_map.hpp>
 
