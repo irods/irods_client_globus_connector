@@ -243,10 +243,15 @@ struct globus_l_gfs_iRODS_handle_t
     char *                              replica_token;
     unsigned int                        number_of_irods_read_write_threads;
     uint64_t                            irods_parallel_file_size_threshold_bytes;
+
+    bool                                first_write_done;
 };
 
 std::condition_variable             outstanding_cntr_cv;
 std::mutex                          outstanding_cntr_mutex;
+
+std::condition_variable             first_write_cv;
+std::mutex                          first_write_mutex;
 
 void print_irods_handle(globus_l_gfs_iRODS_handle_t& handle, char * file, int line)
 {
@@ -913,6 +918,7 @@ globus_l_gfs_iRODS_start(
                 }
                 iRODS_handle->user = strdup(token);
             }
+            iRODS_handle->first_write_done = false;
         }
         free(username_to_parse);
         username_to_parse = nullptr;
@@ -1674,6 +1680,186 @@ globus_l_gfs_iRODS_command(
 
 }
 
+void run_writer_thread(
+        globus_l_gfs_iRODS_handle_t *   iRODS_handle,
+        globus_gfs_operation_t          op,
+        int                             thr_id,
+        char *                          collection)
+{
+    rcComm_t * conn = nullptr;
+    globus_result_t result;
+    int irods_fd;
+
+    std::stringstream write_thread_id_ss;
+    write_thread_id_ss << "write thread (" << thr_id << ")";
+
+    // connect and open the data object
+    // thread 0 already has the connection and data obect opened
+    if (0 == thr_id) {
+        conn = iRODS_handle->conn;
+        irods_fd = iRODS_handle->fd;
+    }
+    else
+    {
+        if (!iRODS_connect_and_login(iRODS_handle, result, conn, write_thread_id_ss.str())) {
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: thread %d: failed to connect.  exiting...\n", thr_id);
+            globus_mutex_lock(&iRODS_handle->mutex);
+            irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+            iRODS_handle->cached_res = result;
+            return;
+        }
+
+        // open the data object
+        dataObjInp_t dataObjInp;
+        memset(&dataObjInp, 0, sizeof(dataObjInp));
+        rstrcpy (dataObjInp.objPath, collection, MAX_NAME_LEN);
+        dataObjInp.openFlags = O_WRONLY;
+
+        // add the replica token
+        std::string replica_token;
+        {
+            globus_mutex_lock(&iRODS_handle->mutex);
+            irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+            replica_token = iRODS_handle->replica_token;
+        }
+        addKeyVal (&dataObjInp.condInput, REPLICA_TOKEN_KW, replica_token.c_str());
+
+        irods_fd = rcDataObjOpen (conn, &dataObjInp);
+
+        if (irods_fd < 0) {
+
+            char *error_str;
+            error_str = globus_common_create_string("rcDataObjOpen failed opening '%s'\n", collection);
+            result = globus_l_gfs_iRODS_make_error(error_str, irods_fd);
+            free(error_str);
+
+            globus_mutex_lock(&iRODS_handle->mutex);
+            irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+            iRODS_handle->cached_res = result;
+
+            return;
+        }
+    }
+
+    // loop through reading from circular buffer
+    // Exit condition: When the iRODS_handle->done flag is set and the circular buffer is empty
+    // we break out of the loop
+    bool exit_condition_met = false;
+    while (true) {
+
+        read_write_buffer_t write_buffer_object;
+
+        try {
+
+            // Do not read from circular buffer if we are done.
+            //
+            // Note:  In the callback we detect EOF.  The done flag is set before the
+            //   buffer is put on the circular buffer.  The last thread which gets the done
+            //   flag set will handle the last write.  All other threads will be waiting on this
+            //   mutex and will detect the done flag and exit.  If the done flag has been detected
+            //   but the circular buffer is not yet empty, threads will continue to drain the buffer.
+            {
+                globus_mutex_lock(&iRODS_handle->mutex);
+                irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+
+                if (irods_write_circular_buffer.is_empty() && iRODS_handle->done) {
+                    break;
+                }
+            }
+
+            // read from circular buffer
+            // use conditional variable to make sure first write comes from thread 0 (see issue 45)
+            if (thr_id != 0) {
+                std::unique_lock<std::mutex> lk(first_write_mutex);
+                first_write_cv.wait(lk, [&iRODS_handle](){ return iRODS_handle->first_write_done == true; });
+            }
+
+            exit_condition_met = irods_write_circular_buffer.pop_front(write_buffer_object, [&iRODS_handle] {
+                    globus_mutex_lock(&iRODS_handle->mutex);
+                    irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+                    bool done_flag = iRODS_handle->done;
+                    return irods_write_circular_buffer.is_empty() && done_flag;
+            } );
+
+            // notify all that the first write is done
+            if (thr_id == 0) {
+                std::unique_lock<std::mutex> lk(first_write_mutex);
+                iRODS_handle->first_write_done = true;
+            }
+            first_write_cv.notify_all();
+
+            if (exit_condition_met) {
+                break;
+            }
+
+            openedDataObjInp_t dataObjLseekInp;
+            memset (&dataObjLseekInp, 0, sizeof (dataObjLseekInp));
+            dataObjLseekInp.l1descInx = irods_fd;
+            fileLseekOut_t *dataObjLseekOut = nullptr;
+            dataObjLseekInp.offset = write_buffer_object.offset;
+            dataObjLseekInp.whence = SEEK_SET;
+
+            int status = rcDataObjLseek(conn, &dataObjLseekInp, &dataObjLseekOut);
+            // verify that it worked
+            if(status < 0)
+            {
+                globus_mutex_lock(&iRODS_handle->mutex);
+                irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+                iRODS_handle->cached_res = globus_l_gfs_iRODS_make_error("rcDataObjLseek failed", status);
+                iRODS_handle->done = GLOBUS_TRUE;
+            }
+            else
+            {
+               openedDataObjInp_t dataObjWriteInp;
+               memset (&dataObjWriteInp, 0, sizeof (dataObjWriteInp));
+               dataObjWriteInp.l1descInx = irods_fd;
+               dataObjWriteInp.len = write_buffer_object.nbytes;
+
+               bytesBuf_t dataObjWriteInpBBuf;
+               dataObjWriteInpBBuf.buf = write_buffer_object.buffer;
+               dataObjWriteInpBBuf.len = write_buffer_object.nbytes;
+
+               int bytes_written  = rcDataObjWrite(conn, &dataObjWriteInp, &dataObjWriteInpBBuf);
+               if (bytes_written < dataObjWriteInp.len) {
+                   // erroring on any short write instead of only bytes_written < 0
+                   globus_mutex_lock(&iRODS_handle->mutex);
+                   irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+                   iRODS_handle->cached_res = globus_l_gfs_iRODS_make_error("rcDataObjWrite failed", bytes_written);
+                   iRODS_handle->done = GLOBUS_TRUE;
+               } else {
+                   globus_gridftp_server_update_bytes_written(op, write_buffer_object.offset, bytes_written);
+               }
+            }
+
+            globus_free(write_buffer_object.buffer);
+            write_buffer_object.buffer = nullptr;
+
+        } catch (irods::experimental::timeout_exception& e) {
+            char * err_str = globus_common_create_string("iRODS: Error: Timeout reading from buffer.\n");
+            {
+                globus_mutex_lock(&iRODS_handle->mutex);
+                irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
+                iRODS_handle->cached_res = GlobusGFSErrorGeneric(err_str);
+                iRODS_handle->done = GLOBUS_TRUE;
+            }
+            free(err_str);
+            break;
+
+        }
+    }
+
+    // close the object and disconnect, thread 0 will close elsewhere
+    if (thr_id != 0) {
+       nlohmann::json json_input{{"fd", irods_fd}};
+       json_input["update_size"] = false;
+       json_input["update_status"] = false;
+       json_input["preserve_replica_state_table"] = false;
+       const auto json_string = json_input.dump();
+       rc_replica_close(conn, json_string.c_str());
+       iRODS_disconnect(conn, write_thread_id_ss.str());
+   }
+}
+
 /*************************************************************************
  *  recv
  *  ----
@@ -1740,7 +1926,7 @@ globus_l_gfs_iRODS_recv(
 
     // start N threads to write to file
     int number_of_irods_write_threads = iRODS_handle->number_of_irods_read_write_threads;
-    irods::thread_pool threads{number_of_irods_write_threads};
+    irods::thread_pool threads{number_of_irods_write_threads-1};
 
     {
         globus_mutex_lock(&iRODS_handle->mutex);
@@ -1891,171 +2077,24 @@ globus_l_gfs_iRODS_recv(
     globus_gridftp_server_begin_transfer(op, 0, iRODS_handle);
 
     // start number_of_irods_write_threads threads to read from circular buffer and write to iRODS
-    for (int thr_id = 0; thr_id < number_of_irods_write_threads; ++thr_id)
+    for (int thr_id = 1; thr_id < number_of_irods_write_threads; ++thr_id)
     {
-
         irods::thread_pool::post(threads, [&iRODS_handle, op, thr_id, collection] () {
-
-
-            rcComm_t * conn = nullptr;
-            globus_result_t result;
-
-
-            std::stringstream write_thread_id_ss;
-            write_thread_id_ss << "write thread (" << thr_id << ")";
-
-            if (!iRODS_connect_and_login(iRODS_handle, result, conn, write_thread_id_ss.str())) {
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: thread %d: failed to connect.  exiting...\n", thr_id);
-                globus_mutex_lock(&iRODS_handle->mutex);
-                irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
-                iRODS_handle->cached_res = result;
-                return;
-            }
-
-            // open the data object
-            dataObjInp_t dataObjInp;
-            memset(&dataObjInp, 0, sizeof(dataObjInp));
-            rstrcpy (dataObjInp.objPath, collection, MAX_NAME_LEN);
-            dataObjInp.openFlags = O_WRONLY;
-
-            // add the replica token
-            std::string replica_token;
-            {
-                globus_mutex_lock(&iRODS_handle->mutex);
-                irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
-                replica_token = iRODS_handle->replica_token;
-            }
-            addKeyVal (&dataObjInp.condInput, REPLICA_TOKEN_KW, replica_token.c_str());
-
-            int irods_fd = rcDataObjOpen (conn, &dataObjInp);
-
-            if (irods_fd < 0) {
-
-                char *error_str;
-                error_str = globus_common_create_string("rcDataObjOpen failed opening '%s'\n", collection);
-                result = globus_l_gfs_iRODS_make_error(error_str, irods_fd);
-                free(error_str);
-
-                globus_mutex_lock(&iRODS_handle->mutex);
-                irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
-                iRODS_handle->cached_res = result;
-
-                return;
-            }
-
-            // loop through reading from circular buffer
-            // Exit condition: When the iRODS_handle->done flag is set and the circular buffer is empty
-            // we break out of the loop
-            bool exit_condition_met = false;
-            while (true) {
-
-                read_write_buffer_t write_buffer_object;
-
-                try {
-
-                    // Do not read from circular buffer if we are done.
-                    //
-                    // Note:  In the callback we detect EOF.  The done flag is set before the
-                    //   buffer is put on the circular buffer.  The last thread which gets the done
-                    //   flag set will handle the last write.  All other threads will be waiting on this
-                    //   mutex and will detect the done flag and exit.  If the done flag has been detected
-                    //   but the circular buffer is not yet empty, threads will continue to drain the buffer.
-                    {
-                        globus_mutex_lock(&iRODS_handle->mutex);
-                        irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
-
-                        if (irods_write_circular_buffer.is_empty() && iRODS_handle->done) {
-                            break;
-                        }
-                    }
-
-                    // read from circular buffer
-
-                    exit_condition_met = irods_write_circular_buffer.pop_front(write_buffer_object, [&iRODS_handle] {
-                            globus_mutex_lock(&iRODS_handle->mutex);
-                            irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
-                            bool done_flag = iRODS_handle->done;
-                            return irods_write_circular_buffer.is_empty() && done_flag;
-                    } );
-
-                    if (exit_condition_met) {
-                        break;
-                    }
-
-                    openedDataObjInp_t dataObjLseekInp;
-                    memset (&dataObjLseekInp, 0, sizeof (dataObjLseekInp));
-                    dataObjLseekInp.l1descInx = irods_fd;
-                    fileLseekOut_t *dataObjLseekOut = nullptr;
-                    dataObjLseekInp.offset = write_buffer_object.offset;
-                    dataObjLseekInp.whence = SEEK_SET;
-
-                    int status = rcDataObjLseek(conn, &dataObjLseekInp, &dataObjLseekOut);
-                    // verify that it worked
-                    if(status < 0)
-                    {
-                        globus_mutex_lock(&iRODS_handle->mutex);
-                        irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
-                        iRODS_handle->cached_res = globus_l_gfs_iRODS_make_error("rcDataObjLseek failed", status);
-                        iRODS_handle->done = GLOBUS_TRUE;
-                    }
-                    else
-                    {
-                       openedDataObjInp_t dataObjWriteInp;
-                       memset (&dataObjWriteInp, 0, sizeof (dataObjWriteInp));
-                       dataObjWriteInp.l1descInx = irods_fd;
-                       dataObjWriteInp.len = write_buffer_object.nbytes;
-
-                       bytesBuf_t dataObjWriteInpBBuf;
-                       dataObjWriteInpBBuf.buf = write_buffer_object.buffer;
-                       dataObjWriteInpBBuf.len = write_buffer_object.nbytes;
-
-                       int bytes_written  = rcDataObjWrite(conn, &dataObjWriteInp, &dataObjWriteInpBBuf);
-                       if (bytes_written < dataObjWriteInp.len) {
-                           // erroring on any short write instead of only bytes_written < 0
-                           globus_mutex_lock(&iRODS_handle->mutex);
-                           irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
-                           iRODS_handle->cached_res = globus_l_gfs_iRODS_make_error("rcDataObjWrite failed", bytes_written);
-                           iRODS_handle->done = GLOBUS_TRUE;
-                       } else {
-                           globus_gridftp_server_update_bytes_written(op, write_buffer_object.offset, bytes_written);
-                       }
-                    }
-
-                    globus_free(write_buffer_object.buffer);
-                    write_buffer_object.buffer = nullptr;
-
-                } catch (irods::experimental::timeout_exception& e) {
-                    char * err_str = globus_common_create_string("iRODS: Error: Timeout reading from buffer.\n");
-                    {
-                        globus_mutex_lock(&iRODS_handle->mutex);
-                        irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
-                        iRODS_handle->cached_res = GlobusGFSErrorGeneric(err_str);
-                        iRODS_handle->done = GLOBUS_TRUE;
-                    }
-                    free(err_str);
-                    break;
-
-                }
-            }
-
-            // close the object
-            nlohmann::json json_input{{"fd", irods_fd}};
-            json_input["update_size"] = false;
-            json_input["update_status"] = false;
-            json_input["preserve_replica_state_table"] = false;
-            const auto json_string = json_input.dump();
-            rc_replica_close(conn, json_string.c_str());
-
-            iRODS_disconnect(conn, write_thread_id_ss.str());
+            run_writer_thread(iRODS_handle, op, thr_id, collection);
         });
     }
 
-    {
+    irods::thread_pool read_from_net_thread{1};
+    irods::thread_pool::post(read_from_net_thread, [&iRODS_handle] () {
         globus_mutex_lock(&iRODS_handle->mutex);
         irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
         globus_l_gfs_iRODS_read_from_net(iRODS_handle);
-    }
+    });
 
+    // current thread is thread 0
+    run_writer_thread(iRODS_handle, op, 0, collection);
+
+    read_from_net_thread.join();
     threads.join();
 
     // close the data object
@@ -2518,10 +2557,6 @@ globus_l_gfs_iRODS_send(
                     iRODS_handle->cached_res = GlobusGFSErrorGeneric(err_str);
                     free(err_str);
                 }
-
-
-                //globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "%s:%d (%s) register_write offset=%ld, nbytes=%ld, buffer=%p\n",
-                //        __FILE__, __LINE__, __FUNCTION__,buffer_object.offset, buffer_object.nbytes, buffer_object.buffer);
 
                 res = globus_gridftp_server_register_write(
                     iRODS_handle->op, buffer_object.buffer, buffer_object.nbytes, buffer_object.offset, -1,
