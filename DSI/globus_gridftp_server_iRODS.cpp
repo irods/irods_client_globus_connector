@@ -46,6 +46,7 @@ extern "C" {
 #include <irods/thread_pool.hpp>
 #include <irods/filesystem.hpp>
 #include <irods/base64.h>
+#include <irods_globus_base64.hpp>
 
 // boost includes
 #include <boost/algorithm/string.hpp>
