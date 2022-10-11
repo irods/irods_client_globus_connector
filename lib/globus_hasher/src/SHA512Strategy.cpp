@@ -8,7 +8,7 @@
 #include <boost/algorithm/string/predicate.hpp>
 #include <openssl/sha.h>
 
-#include "base64.h"
+#include <irods_globus_base64.hpp>
 
 namespace irods::globus {
 
@@ -35,7 +35,7 @@ namespace irods::globus {
         unsigned long out_len = CHKSUM_LEN * 2 - len;
 
         unsigned char out_buffer[CHKSUM_LEN * 2];
-        base64_encode( final_buffer, SHA512_DIGEST_LENGTH, out_buffer, &out_len );
+        irods::globus::base64_encode( final_buffer, SHA512_DIGEST_LENGTH, out_buffer, &out_len );
 
         _messageDigest = SHA512_CHKSUM_PREFIX;
         _messageDigest += std::string( ( char* )out_buffer, out_len );

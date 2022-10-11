@@ -51,7 +51,7 @@ extern "C" {
   #include "rodsClient.h"
 #endif
 
-#include <base64.h>
+#include <irods_globus_base64.hpp>
 
 // boost includes
 #include <boost/algorithm/string.hpp>
@@ -157,7 +157,7 @@ int convert_base64_to_hex_string(const std::string& base64_str, const int& bit_c
     unsigned char out[bit_count / 8];
     unsigned long out_len = bit_count / 8;
 
-    int ret = base64_decode(reinterpret_cast<const unsigned char*>(base64_str.c_str()), base64_str.size(), out, &out_len);
+    int ret = irods::globus::base64_decode(reinterpret_cast<const unsigned char*>(base64_str.c_str()), base64_str.size(), out, &out_len);
 
     if (ret < 0) {
         return ret;
@@ -1561,7 +1561,7 @@ globus_l_gfs_iRODS_command(
                    break;
                }
 
-               char buffer_read[HASH_BUF_SZ];
+               char buffer_read[HASH_BUF_SZ] = {0};
 
                openedDataObjInp_t input{};
                input.l1descInx = fd;
