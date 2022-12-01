@@ -7,8 +7,6 @@
 #include <cstring>
 #include <boost/algorithm/string/predicate.hpp>
 
-#include "irods/base64.h"
-
 namespace irods::globus {
 
     const std::string ADLER32_NAME( "adler32" );

@@ -224,7 +224,6 @@ add_library(${dsi_library_name} SHARED
     ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/SHA256Strategy.cpp
     ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/SHA512Strategy.cpp
     ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/irods_hasher_factory.cpp
-    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/irods_globus_base64.cpp
     )
 add_library(${gridmap_callout_library_name} SHARED DSI/gridmap_iRODS_callout.c DSI/libirodsmap.c)
 
