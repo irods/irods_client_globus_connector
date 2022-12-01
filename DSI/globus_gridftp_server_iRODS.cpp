@@ -45,7 +45,7 @@ extern "C" {
 #include <irods/replica_close.h>
 #include <irods/thread_pool.hpp>
 #include <irods/filesystem.hpp>
-#include <irods/base64.h>
+#include <irods/base64.hpp>
 
 // boost includes
 #include <boost/algorithm/string.hpp>
@@ -151,7 +151,7 @@ int convert_base64_to_hex_string(const std::string& base64_str, const int& bit_c
     unsigned char out[bit_count / 8];
     unsigned long out_len = bit_count / 8;
 
-    int ret = irods::globus::base64_decode(reinterpret_cast<const unsigned char*>(base64_str.c_str()), base64_str.size(), out, &out_len);
+    int ret = irods::base64_decode(reinterpret_cast<const unsigned char*>(base64_str.c_str()), base64_str.size(), out, &out_len);
 
     if (ret < 0) {
         return ret;
@@ -783,6 +783,7 @@ iRODS_connect_and_login(
     globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s connected now logging in.\n", call_context_for_logging.c_str());
     status = clientLogin(conn, nullptr, NULL);
     if (status != 0) {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s logging in failed with error %d.\n", call_context_for_logging.c_str(), status);
         result = globus_l_gfs_iRODS_make_error("\'clientLogin\' failed.", status);
         return false;
     }
