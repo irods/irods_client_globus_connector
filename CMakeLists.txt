@@ -225,6 +225,7 @@ add_library(${dsi_library_name} SHARED
     ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/SHA512Strategy.cpp
     ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/irods_hasher_factory.cpp
     ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/irods_globus_base64.cpp
+    ${CMAKE_SOURCE_DIR}/lib/irods_login/src/clientLogin.cpp
     )
 add_library(${gridmap_callout_library_name} SHARED DSI/gridmap_iRODS_callout.c DSI/libirodsmap.c)
 
@@ -251,6 +252,7 @@ target_link_libraries(${testpidmanager_exe} ${irods_link_obj_path} "-lm -lglobus
 
 include_directories(
     ${CMAKE_SOURCE_DIR}/lib/globus_hasher/include
+    ${CMAKE_SOURCE_DIR}/lib/irods_login/include
     ${irods_include_path_list}
     )
 

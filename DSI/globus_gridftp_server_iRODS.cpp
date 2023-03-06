@@ -47,6 +47,7 @@ extern "C" {
 #include <irods/filesystem.hpp>
 #include <irods/base64.h>
 #include <irods_globus_base64.hpp>
+#include <clientLogin.hpp>
 
 // boost includes
 #include <boost/algorithm/string.hpp>
@@ -782,9 +783,9 @@ iRODS_connect_and_login(
     }
 
     globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s connected now logging in.\n", call_context_for_logging.c_str());
-    status = clientLogin(conn, nullptr, NULL);
+    status = irods_globus_clientLogin(conn, nullptr, NULL);
     if (status != 0) {
-        result = globus_l_gfs_iRODS_make_error("\'clientLogin\' failed.", status);
+        result = globus_l_gfs_iRODS_make_error("\'irods_globus_clientLogin\' failed.", status);
         return false;
     }
 
