@@ -56,12 +56,12 @@ Prerequisites
 
 	Ubuntu:
 	```
-	sudo apt-get -y install irods-externals-cmake3.11.4-0 irods-externals-clang6.0-0 irods-externals-jansson2.7-0 irods-dev irods-runtime
+	sudo apt-get -y install irods-externals-cmake3.11.4-0 irods-externals-clang6.0-0 irods-externals-jansson2.7-0 'irods-dev=4.2.12-1~*' 'irods-runtime=4.2.12-1~*'
 	```
 
 	CentOS:
 	```
-	sudo yum -y install irods-externals-cmake3.11.4-0 irods-externals-clang6.0-0 irods-externals-jansson2.7-0 irods-devel irods-runtime rpm-build
+	sudo yum -y install irods-externals-cmake3.11.4-0 irods-externals-clang6.0-0 irods-externals-jansson2.7-0 irods-devel-4.2.12-1 irods-runtime-4.2.12-1 rpm-build
 	```
 
 - Globus and other packages:
@@ -89,15 +89,11 @@ Prerequisites
 
 	CentOS:
 	```
-	sudo yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
-	sudo yum install -y http://downloads.globus.org/toolkit/gt6/stable/installers/repo/rpm/globus-toolkit-repo-latest.noarch.rpm
-	sudo yum-config-manager --enable Globus-Connect-Server-5-Stable
-	sudo yum-config-manager --enable Globus-Toolkit-6-Stable
+	sudo yum install -y epel-release
+	sudo yum install -y https://downloads.globus.org/globus-connect-server/stable/installers/repo/rpm/globus-repo-latest.noarch.rpm
 	sudo yum install -y globus-gridftp-server-progs globus-gass-copy-progs
-	sudo yum install -y globus-common-devel globus-gridftp-server-devel globus-gridmap-callout-error-devel
-	sudo yum install -y libcurl-devel
-	sudo yum install -y git
-	sudo yum install -y gcc-c++
+	sudo yum --disablerepo epel install -y globus-common-devel globus-gridftp-server-devel globus-gridmap-callout-error-devel
+	sudo yum install -y libcurl-devel git gcc-c++ make
 	sudo yum install -y globus-gsi-cert-utils-progs
 	sudo yum install -y globus-proxy-utils
 	```
