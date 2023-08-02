@@ -1012,6 +1012,8 @@ globus_l_gfs_iRODS_destroy(
         globus_mutex_destroy(&iRODS_handle->mutex);
         globus_fifo_destroy(&iRODS_handle->rh_q);
 
+        // Note that rcDisconnnect calls freeRcComm which calls cleanRcComm.  This
+        // frees the conn pointer.
         iRODS_disconnect(iRODS_handle->conn, "main_thread");
 
         globus_free(iRODS_handle);
@@ -1800,6 +1802,10 @@ void run_writer_thread(
             dataObjLseekInp.whence = SEEK_SET;
 
             int status = rcDataObjLseek(conn, &dataObjLseekInp, &dataObjLseekOut);
+            if (dataObjLseekOut) {
+                std::free(dataObjLseekOut);
+            }
+
             // verify that it worked
             if(status < 0)
             {
@@ -1990,7 +1996,14 @@ globus_l_gfs_iRODS_recv(
 
             // get and save the replica access token
             const auto j_in = nlohmann::json{{"fd", iRODS_handle->fd}}.dump();
+
             char* j_out{};
+            irods::at_scope_exit clean_up_j_out{[&j_out] { 
+                if (j_out) {
+                    std::free(j_out);
+                }
+            }};
+
             nlohmann::json fd_info;
 
             const auto ec = rc_get_file_descriptor_info(iRODS_handle->conn, j_in.data(), &j_out);
@@ -2040,7 +2053,14 @@ globus_l_gfs_iRODS_recv(
 
                 // get and save the replica access token
                 const auto j_in = nlohmann::json{{"fd", iRODS_handle->fd}}.dump();
+
                 char* j_out{};
+                irods::at_scope_exit clean_up_j_out{[&j_out] { 
+                    if (j_out) {
+                        std::free(j_out);
+                    }
+                }};
+
                 nlohmann::json fd_info;
 
                 const auto ec = rc_get_file_descriptor_info(iRODS_handle->conn, j_in.data(), &j_out);
@@ -2818,6 +2838,9 @@ seek_and_read(
     fileLseekOut_t *dataObjLseekOut = nullptr;
 
     int status = rcDataObjLseek(conn, &dataObjLseekInp, &dataObjLseekOut);
+    if (dataObjLseekOut) {
+        std::free(dataObjLseekOut);
+    }
 
     // verify that it worked
     if (status < 0)
