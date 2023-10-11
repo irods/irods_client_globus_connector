@@ -36,7 +36,7 @@ include(GNUInstallDirs)
 
 project (iRODS_DSI C CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD ${IRODS_CXX_STANDARD})
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options(-nostdinc++)
 
