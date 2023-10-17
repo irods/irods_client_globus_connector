@@ -1470,12 +1470,13 @@ globus_l_gfs_iRODS_command(
                }
 
                //SELECT META_DATA_ATTR_VALUE, META_DATA_ATTR_UNITS, MIN(DATA_MODIFY_TIME) where COLL_NAME = '/tempZone/home/rods' and DATA_NAME = 'medium_file' and DATA_REPL_STATUS = '1'
-               // use lowercase 'select' to work around
+               // use lowercase 'select' and 'where' to work around
                // https://github.com/irods/irods/issues/4697
+               // https://github.com/irods/irods_client_globus_connector/issues/77
                std::string metadata_query_str =
                     boost::str(boost::format(
                     "select META_DATA_ATTR_VALUE, META_DATA_ATTR_UNITS, MIN(DATA_MODIFY_TIME) "
-                    "WHERE META_DATA_ATTR_NAME = '%s' AND DATA_NAME = '%s' AND COLL_NAME = '%s' AND DATA_REPL_STATUS = '1'") %
+                    "where META_DATA_ATTR_NAME = '%s' AND DATA_NAME = '%s' AND COLL_NAME = '%s' AND DATA_REPL_STATUS = '1'") %
                     checksum_avu_name %
                     data_name %
                     coll_name);
