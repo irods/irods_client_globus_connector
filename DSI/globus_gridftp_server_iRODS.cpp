@@ -1922,7 +1922,6 @@ globus_l_gfs_iRODS_recv(
     char *                              collection = nullptr;
     //char *                              handle_server;
     dataObjInp_t                        dataObjInp;
-    openedDataObjInp_t                  dataObjWriteInp;
     int result;
 
     iRODS_handle = (globus_l_gfs_iRODS_handle_t *) user_arg;
@@ -1974,7 +1973,7 @@ globus_l_gfs_iRODS_recv(
 
         if(transfer_info->truncate)
         {
-            flags |= O_TRUNC;
+            flags |= O_TRUNC | O_CREAT;
         }
 
         memset (&dataObjInp, 0, sizeof (dataObjInp));
@@ -1991,7 +1990,7 @@ globus_l_gfs_iRODS_recv(
         iRODS_handle->fd = rcDataObjOpen (iRODS_handle->conn, &dataObjInp);
 
         if (iRODS_handle->fd > 0) {
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: Open existing object: %s.\n", collection);
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: Open object: %s.\n", collection);
 
             // get and save the replica access token
             const auto j_in = nlohmann::json{{"fd", iRODS_handle->fd}}.dump();
@@ -2023,61 +2022,9 @@ globus_l_gfs_iRODS_recv(
         }
         else
         {
-            //create the obj
-            memset (&dataObjInp, 0, sizeof (dataObjInp));
-            memset (&dataObjWriteInp, 0, sizeof (dataObjWriteInp));
-            rstrcpy (dataObjInp.objPath, collection, MAX_NAME_LEN);
-            dataObjInp.dataSize = 0;
-            // set operation type to PUT, otherwise acPostProcForPut rules will not fire through GridFTP uploads.
-            //dataObjInp.oprType = PUT_OPR;
-            addKeyVal (&dataObjInp.condInput, FORCE_FLAG_KW, "");
-            // give priority to explicit resource mapping, otherwise use default resource if set
-            if (iRODS_Resource_struct.resource != nullptr)
-            {
-                addKeyVal (&dataObjInp.condInput, DEST_RESC_NAME_KW, iRODS_Resource_struct.resource);
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: Creating file with resource: %s\n", iRODS_Resource_struct.resource);
-            } else if (iRODS_handle->defResource != nullptr ) {
-                addKeyVal (&dataObjInp.condInput, DEST_RESC_NAME_KW, iRODS_handle->defResource);
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: Creating file with default resource: %s\n", iRODS_handle->defResource);
-            }
-            iRODS_handle->fd = rcDataObjCreate (iRODS_handle->conn, &dataObjInp);
-            if (iRODS_handle->fd < 0) {
-                result = globus_l_gfs_iRODS_make_error("rcDataObjCreate failed", iRODS_handle->fd);
-                globus_gridftp_server_finished_transfer(op, result);
-                return;
-            }
-            else
-            {
-                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: Creating file succeeded. File created: %s.\n", collection);
-
-                // get and save the replica access token
-                const auto j_in = nlohmann::json{{"fd", iRODS_handle->fd}}.dump();
-
-                char* j_out{};
-                irods::at_scope_exit clean_up_j_out{[&j_out] { 
-                    if (j_out) {
-                        std::free(j_out);
-                    }
-                }};
-
-                nlohmann::json fd_info;
-
-                const auto ec = rc_get_file_descriptor_info(iRODS_handle->conn, j_in.data(), &j_out);
-
-                if (ec != 0) {
-                    char *error_str;
-                    error_str = globus_common_create_string("Failed to retrieve remote L1 descriptor information from iRODS, error_code = %d\n", ec);
-                    result = globus_l_gfs_iRODS_make_error(error_str, ec);
-                    free(error_str);
-                    error_str = nullptr;
-                    globus_gridftp_server_finished_transfer(op, result);
-                    return;
-                }
-
-                fd_info = nlohmann::json::parse(j_out);
-                std::string replica_token = fd_info.at("replica_token").get<std::string>();
-                iRODS_handle->replica_token = strdup(replica_token.c_str());
-            }
+            result = globus_l_gfs_iRODS_make_error("rcDataObjOpen failed", iRODS_handle->fd);
+            globus_gridftp_server_finished_transfer(op, result);
+            return;
         }
 
         /* reset all the needed variables in the handle */
@@ -2090,7 +2037,6 @@ globus_l_gfs_iRODS_recv(
         iRODS_handle->op = op;
         globus_gridftp_server_get_block_size(
             op, &iRODS_handle->block_size);
-
     }
 
     globus_gridftp_server_begin_transfer(op, 0, iRODS_handle);
