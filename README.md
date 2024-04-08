@@ -172,6 +172,7 @@ Configuring the GridFTP server and run
 - If the plugin was installed via pre-built packages:
 	```
 	$irodsConnectAsAdmin "rods"
+	$spOption irods_client_globus_connector
 	load_dsi_module iRODS
 	auth_level 4
 	```
@@ -179,12 +180,24 @@ Configuring the GridFTP server and run
 	```
 	$LD_LIBRARY_PATH "$LD_LIBRARY_PATH:/<preferred_path>"
 	$irodsConnectAsAdmin "rods"
+	$spOption irods_client_globus_connector
 	load_dsi_module iRODS
 	auth_level 4
 	```
 	In case the GridFTP is run as a system service, also set the $HOME env variable pointing to the home folder of the user who runs the gridftp server:
 	```
 	$HOME /path/to/user/home
+	```
+
+	The $spOption setting allows the `ips` command to properly report agents as being spawned by a connection from the iRODS Globus Connector. This environment variable can be set to whatever string is appropriate for your setup.
+
+	The following is example output of `ips` when $spOption is set to "irods_client_globus_connector":
+
+	```
+	# ips
+	Server: localhost
+	     7814 rods#tempZone  0:00:13  irods_client_globus_connector  127.0.0.1
+	     7845 rods#tempZone  0:00:00  ips  127.0.0.1
 	```
 
 4. If the plugin was built and the user set the DEST_LIB_DIR to /<preferred_path>, add the following line at the beginning of the `globus-gridftp-server` (usually `/etc/init.d/globus-gridftp-server`) file. (This is not required if installing from pre-built packages.)
