@@ -62,6 +62,7 @@ extern "C" {
 #include <pthread.h>
 #include <iomanip>
 #include <condition_variable>
+#include <map>
 
 // local includes
 #include "circular_buffer.hpp"
@@ -99,11 +100,53 @@ extern "C" {
 /* if present, set the number or read/write threads for file transfers */
 #define IRODS_PARALLEL_FILE_SIZE_THRESHOLD_BYTES "irodsParallelFileSizeThresholdBytes"
 
-
 const static unsigned int DEFAULT_NUMBER_OF_IRODS_READ_WRITE_THREADS = 3;
 const static unsigned int MAXIMUM_NUMBER_OF_IRODS_READ_WRITE_THREADS = 10;
 
 const static std::string CHECKSUM_AVU_NAMESPACE{"GLOBUS"};
+
+// map to translate globus_gfs_command_type_t values into strings for error messages
+const static std::map<int, std::string> command_map = {
+    { 1, "GLOBUS_GFS_CMD_MKD" },
+    { 2, "GLOBUS_GFS_CMD_RMD" },
+    { 3, "GLOBUS_GFS_CMD_DELE" },
+    { 4, "GLOBUS_GFS_CMD_SITE_AUTHZ_ASSERT" },
+    { 5, "GLOBUS_GFS_CMD_SITE_RDEL" },
+    { 6, "GLOBUS_GFS_CMD_RNTO" },
+    { 7, "GLOBUS_GFS_CMD_RNFR" },
+    { 8, "GLOBUS_GFS_CMD_CKSM" },
+    { 9, "GLOBUS_GFS_CMD_SITE_CHMOD" },
+    { 10, "GLOBUS_GFS_CMD_SITE_DSI" },
+    { 11, "GLOBUS_GFS_CMD_SITE_SETNETSTACK" },
+    { 12, "GLOBUS_GFS_CMD_SITE_SETDISKSTACK" },
+    { 13, "GLOBUS_GFS_CMD_SITE_CLIENTINFO" },
+    { 14, "GLOBUS_GFS_CMD_DCSC" },
+    { 15, "GLOBUS_GFS_CMD_SITE_CHGRP" },
+    { 16, "GLOBUS_GFS_CMD_SITE_UTIME" },
+    { 17, "GLOBUS_GFS_CMD_SITE_SYMLINKFROM" },
+    { 18, "GLOBUS_GFS_CMD_SITE_SYMLINK" },
+    { 19, "GLOBUS_GFS_CMD_HTTP_PUT" },
+    { 21, "GLOBUS_GFS_CMD_HTTP_GET" },
+    { 22, "GLOBUS_GFS_CMD_HTTP_CONFIG" },
+    { 23, "GLOBUS_GFS_CMD_TRNC" },
+    { 24, "GLOBUS_GFS_CMD_SITE_TASKID" },
+    { 3072, "GLOBUS_GFS_CMD_SITE_RESTRICT" },
+    { 3073, "GLOBUS_GFS_CMD_SITE_CHROOT" },
+    { 3074, "GLOBUS_GFS_CMD_SITE_SHARING" },
+    { 3075, "GLOBUS_GFS_CMD_UPAS" },
+    { 3076, "GLOBUS_GFS_CMD_UPRT" },
+    { 3077, "GLOBUS_GFS_CMD_STORATTR" },
+    { 3078, "GLOBUS_GFS_CMD_WHOAMI" },
+    { 4096, "GLOBUS_GFS_MIN_CUSTOM_CMD" }
+};
+
+const std::string get_command_string(const int i) {
+    auto iter = command_map.find(i);
+    if (iter != command_map.end()) {
+        return iter->second;
+    }
+    return std::to_string(i);
+}
 
 // struct to save buffer to be written to iRODS
 typedef struct read_write_buffer
@@ -1430,8 +1473,57 @@ globus_l_gfs_iRODS_command(
             }
             break;
 
+        case GLOBUS_GFS_CMD_RNTO:
+            {
+                namespace fs = irods::experimental::filesystem;
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: GLOBUS_GFS_CMD_RNTO\n");
+
+                if (cmd_info->from_pathname == nullptr)
+                {
+                    result = GlobusGFSErrorGeneric("iRODS: did not receive the from path");
+                    break;
+                }
+
+                char * from_path = strdup(cmd_info->from_pathname);
+                if (from_path == nullptr)
+                {
+                    result = GlobusGFSErrorGeneric("iRODS: strdup failed");
+                    break;
+                }
+                iRODS_l_reduce_path(from_path);
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"rename from [%s] to [%s]\n", from_path, collection);
+
+                // determine if from_path is a collection or data object
+                dataObjCopyInp_t dataObjRenameInp;
+                try
+                {
+                    const auto object_status = fs::client::status(*iRODS_handle->conn, from_path);
+                    if (fs::client::is_data_object(object_status)) {
+                        dataObjRenameInp.srcDataObjInp.oprType = dataObjRenameInp.destDataObjInp.oprType = RENAME_DATA_OBJ;
+                    } else if (fs::client::is_collection(object_status)) {
+                        dataObjRenameInp.srcDataObjInp.oprType = dataObjRenameInp.destDataObjInp.oprType = RENAME_COLL;
+                    } else {
+                        // this generally won't run because a stat is done first but just in case generate an error
+                        free(from_path);
+                        error_str = globus_common_create_string("iRODS: rename source [%s] does not exist\n", from_path);
+                        result = GlobusGFSErrorGeneric(error_str);
+                        break;
+                    }
+                } catch (const std::exception& e) {
+                    free(from_path);
+                    error_str = globus_common_create_string("iRODS: exception caught while reading source file from iRODS\n", from_path);
+                    result = GlobusGFSErrorGeneric(error_str);
+                    break;
+                }
+                rstrcpy( dataObjRenameInp.destDataObjInp.objPath, collection, MAX_NAME_LEN );
+                rstrcpy( dataObjRenameInp.srcDataObjInp.objPath, from_path, MAX_NAME_LEN );
+                free(from_path);
+                status = rcDataObjRename(iRODS_handle->conn, &dataObjRenameInp); 
+            }
+            break;
+
         case GLOBUS_GFS_CMD_CKSM:
-           {
+            {
                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: GLOBUS_GFS_CMD_CKSUM\n");
                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: algorithm=%s\n", cmd_info->cksm_alg);
                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: collection=%s\n", collection);
@@ -1642,12 +1734,12 @@ globus_l_gfs_iRODS_command(
                modAVUMetadataInp.arg4 = outChksum;
                modAVUMetadataInp.arg5 = arg5;
                rcModAVUMetadata(iRODS_handle->conn, &modAVUMetadataInp);
-
-           }
-
-           break;
+            }
+            break;
 
         default:
+            error_str = globus_common_create_string("iRODS: Command (%s) is not implemented.", get_command_string(cmd_info->command).c_str());
+            result = GlobusGFSErrorGeneric(error_str);
             break;
     }
 
@@ -1676,7 +1768,6 @@ globus_l_gfs_iRODS_command(
     }
 
     globus_gridftp_server_finished_command(op, result, outChksum);
-
 }
 
 void execute_writer_thread_operation(
