@@ -299,17 +299,17 @@ Additional configuration
 
     The maximum value for this is 10 threads.  If it is set to a number higher than 10, it will default to 10.
 
-6.  To configure the file size threshold (in bytes) to switch from single threaded reads to multiple threaded reads, add the $irodsParallelFileSizeThresholdBytes parameter in the GridFTP configuration file.  For example, to set this to 32MB, set it as follows:
+6.  To configure the file size threshold (in bytes) to switch from single threaded uploads and downloads to multiple threaded uploads and downloads, add the $irodsParallelFileSizeThresholdBytes parameter in the GridFTP configuration file.  For example, to set this to 32MB, set it as follows:
 
     ```
     $irodsParallelFileSizeThresholdBytes 33554432
     ```
 
-    If this parameter is not set or the value is invalid, multithreaded reads will always be used.
+    The default value for this parameter is 32 MiB for uploads.  Any upload with a file size less than $irodsParallelFileSizeThresholdBytes will use only one thread.  Any upload with a file size greater than or equal to $irodsParallelFileSizeThresholdBytes will use $numberOfIrodsReadWriteThreads upload threads.
 
-    If this parameter is set, the plugin will do a query to iRODS to determine the file size.  If the returned file size is less than $irodsParallelFileSizeThresholdBytes, only one read thread will be used.
+    There is no default for downloads.  If $irodsParallelFileSizeThresholdBytes is not set, $numberOfIrodsReadWriteThreads threads will always be spawned for downloads.  When $irodsParallelFileSizeThresholdBytes is set, iRODS must do a query to the iRODS database to determine the file size.  If $irodsParallelFileSizeThresholdBytes is set, the plugin will then only spawn multiple threads if the file size is greater than or equal to the value set in $irodsParallelFileSizeThresholdBytes.
 
-    It is suggested that the administrator tests small file downloads to determine the best setting for the $irodsParallelFileSizeThresholdBytes.  This depends on the network topology.  In some cases, doing a query might be less efficient than starting up multiple threads.  If that is the case don't set $irodsParallelFileSizeThresholdBytes.
+    It is suggested that the administrator tests small file uploads and downloads to determine the best setting for the $irodsParallelFileSizeThresholdBytes.  This depends on the network topology.  In some cases, doing a query to iRODS for file size might be less efficient than starting up multiple threads.  If that is the case, do not set $irodsParallelFileSizeThresholdBytes.
 
 
 Additional notes

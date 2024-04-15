@@ -2016,9 +2016,30 @@ globus_l_gfs_iRODS_recv(
     int result;
 
     iRODS_handle = (globus_l_gfs_iRODS_handle_t *) user_arg;
+    
 
     // start N threads to write to file
     int number_of_irods_write_threads = iRODS_handle->number_of_irods_read_write_threads;
+  
+    // Make a decision about the number of write threads based on the file size provided
+    // to us (transfer_info->alloc_size). Keep the number of write threads as it is unless
+    // the following conditions are met:
+    // 1. The transfer_info->alloc_size is defined (not zero) and greater than zero.
+    // 2. The alloc_size < irods_parallel_file_size_threshold_bytes.
+    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: Alloc size: %lld.\n", transfer_info->alloc_size);
+    if (transfer_info->alloc_size > 0)
+    {
+        // Get the parallel transfer threshold.  For uploads, if this is not defined default it to 32 MiB.
+        uint64_t parallel_transfer_threshold =  iRODS_handle->irods_parallel_file_size_threshold_bytes;
+        if (parallel_transfer_threshold != 0)
+        {
+            parallel_transfer_threshold = 32*1024*1024;
+        }
+        if (transfer_info->alloc_size < static_cast<globus_off_t>(parallel_transfer_threshold))
+        {
+            number_of_irods_write_threads = 1;
+        }
+    }
 
     // the main thread is the first writer so thread_pool starts number_of_irods_write_threads-1 threads
     irods::thread_pool threads{number_of_irods_write_threads-1};
