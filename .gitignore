@@ -9,3 +9,5 @@ testirodsmap
 gridmap_iRODS_callout.conf
 .cproject
 .project
+*.pyc
+*.bu

@@ -1,0 +1,36 @@
+version: '3'
+
+services:
+    irods:
+        build:
+            context: . 
+            dockerfile: irods.ubuntu22.Dockerfile
+        healthcheck:
+            test: ils || exit 1
+            start_period: 20s
+            interval: 10s
+            timeout: 10s
+            retries: 20 
+        deploy:
+            resources:
+                limits:
+                    cpus: 1
+                    memory: 8G 
+    globus-ubuntu22:
+        build:
+            context: .
+            dockerfile: globus.ubuntu22.Dockerfile
+        depends_on:
+            irods:
+                condition: service_healthy
+        volumes:
+            - ../../:/irods_client_globus_connector 
+    globus-ubuntu20:
+        build:
+            context: .
+            dockerfile: globus.ubuntu20.Dockerfile
+        depends_on:
+            irods:
+                condition: service_healthy
+        volumes:
+            - ../../:/irods_client_globus_connector 
