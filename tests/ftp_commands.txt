@@ -1,0 +1,4 @@
+open localhost 2811
+user user1 pass
+put abc.txt
+bye

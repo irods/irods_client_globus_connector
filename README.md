@@ -332,6 +332,11 @@ export irodsEnvFile=/path/to/.irodsEnv
 $DEST_BIN_DIR/testirodsmap "/C=XX/O=YYY/CN=Example User"
 ```
 
+Automated Testing
+-----------------
+
+See [Automated Testing README](tests/docker/README.md) for information about running the automated testing scripts.
+
 
 License
 ---------------------------------
