@@ -2009,7 +2009,7 @@ globus_l_gfs_iRODS_recv(
     globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s called\n", __FUNCTION__);
 
     globus_l_gfs_iRODS_handle_t *       iRODS_handle;
-    int                                 flags = O_WRONLY;
+    int                                 flags = O_WRONLY | O_CREAT;
     char *                              collection = nullptr;
     //char *                              handle_server;
     dataObjInp_t                        dataObjInp;
@@ -2085,7 +2085,7 @@ globus_l_gfs_iRODS_recv(
 
         if(transfer_info->truncate)
         {
-            flags |= O_TRUNC | O_CREAT;
+            flags |= O_TRUNC;
         }
 
         memset (&dataObjInp, 0, sizeof (dataObjInp));
