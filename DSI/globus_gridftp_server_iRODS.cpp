@@ -46,6 +46,7 @@ extern "C" {
 #include <irods/thread_pool.hpp>
 #include <irods/filesystem.hpp>
 #include <irods/base64.hpp>
+#include <irods/touch.h>
 
 // boost includes
 #include <boost/algorithm/string.hpp>
@@ -212,6 +213,7 @@ int convert_base64_to_hex_string(const std::string& base64_str, const int& bit_c
     return 0;
 }
 
+// removes all trailing slashes and replaces consecutive slashes with a single slash
 int
 iRODS_l_reduce_path(
     char *                              path)
@@ -282,6 +284,9 @@ struct globus_l_gfs_iRODS_handle_t
     uint64_t                            irods_parallel_file_size_threshold_bytes;
 
     bool                                first_write_done;
+
+    // added to get file modification time from client
+    time_t                              utime;
 };
 
 std::condition_variable             outstanding_cntr_cv;
@@ -2041,6 +2046,18 @@ globus_l_gfs_iRODS_recv(
         }
     }
 
+    result = globus_gridftp_server_get_recv_modification_time(op, &iRODS_handle->utime);
+    if(result != GLOBUS_SUCCESS)
+    {
+        // continue but don't modify utime
+        globus_gfs_log_result(GLOBUS_GFS_LOG_WARN, "iRODS: Error getting modtime, skipping: ", result);
+        iRODS_handle->utime = -1;
+    }
+    else
+    {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: globus_gridftp_server_get_recv_modification_time returned %lld.\n", static_cast<long long>(iRODS_handle->utime));
+    }
+
     // the main thread is the first writer so thread_pool starts number_of_irods_write_threads-1 threads
     irods::thread_pool threads{number_of_irods_write_threads-1};
 
@@ -2180,6 +2197,19 @@ globus_l_gfs_iRODS_recv(
     memset (&dataObjCloseInp, 0, sizeof (dataObjCloseInp));
     dataObjCloseInp.l1descInx = iRODS_handle->fd;
     rcDataObjClose(iRODS_handle->conn, &dataObjCloseInp);
+    
+    // update the modify time if preservation option selected
+    if (iRODS_handle->utime > 0)
+    {
+        nlohmann::json json_input;
+        json_input["logical_path"] = collection;
+        json_input["options"]["no_create"] = true;
+        json_input["options"]["seconds_since_epoch"] = iRODS_handle->utime;
+        if (const auto ec = rc_touch(iRODS_handle->conn, json_input.dump().c_str()); ec < 0) {
+            globus_gfs_log_message(GLOBUS_GFS_LOG_ERR,
+                    "iRODS: Caught error (%d) trying to update the modify time for [%s]. Continuing without updating modify time.\n", ec, collection);
+        }
+    }
 
     free(collection);
     collection = nullptr;

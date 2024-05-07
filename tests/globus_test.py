@@ -215,6 +215,45 @@ class Globus_Test(TestCase):
                 ftp.login(user='user1', passwd='pass')
                 ftp.delete(f'/tempZone/home/user1/{filename2}')
 
+    def test_preserve_file_modification_time(self):
+        filename = f'{inspect.currentframe().f_code.co_name}1'
+        modify_time = '19710827010000'
+
+        try:
+            make_arbitrary_file(filename, 100*1024)
+            with FTP() as ftp:
+                ftp.connect(host='localhost', port=2811)
+                ftp.login(user='user1', passwd='pass')
+
+                # tell the server to send a hardcoded file modification time
+                ftp.sendcmd(f'site storattr modify={modify_time};')
+
+                # write the file that will be renamed
+                with open(filename,'rb') as f:
+                    ftp.storbinary(f'STOR /tempZone/home/user1/{filename}', f)
+
+            # check the file modification time
+            with FTP() as ftp:
+                ftp.connect(host='localhost', port=2811)
+                ftp.login(user='user1', passwd='pass')
+
+                rv = ftp.mlsd(f'/tempZone/home/user1/{filename}', facts=['modify'])
+
+                # mlsd returns a generator object yielding a tuple of two elements for every file found in path.
+                # First element is the file name, the second one is a dictionary containing facts about the file name. 
+                entry = next(rv)
+                self.assertEqual(f'/tempZone/home/user1/{filename}', entry[0])
+                self.assertEqual(modify_time, entry[1]['modify'])
+
+        finally:
+            os.remove(filename)
+
+            # remove file via ftp 
+            with FTP() as ftp:
+                ftp.connect(host='localhost', port=2811)
+                ftp.login(user='user1', passwd='pass')
+                ftp.delete(f'/tempZone/home/user1/{filename}')
+
     def test_directory_creation_renaming_removal_with_ftp(self):
         filename = f'{inspect.currentframe().f_code.co_name}1'
 
