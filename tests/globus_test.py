@@ -101,6 +101,22 @@ class Globus_Test(TestCase):
             os.remove(get_filename)
             assert_command(f'irm -f /tempZone/home/rods/{put_filename}')
 
+    def test_upload_large_file_with_apostrophe_in_filename_with_globus_url_copy__issue_101(self):
+        put_filename = f'{inspect.currentframe().f_code.co_name}\'s file'
+        get_filename = f'{put_filename}.get'
+
+        try:
+
+            make_arbitrary_file(put_filename, 100*1024*1024)
+            assert_command(f'globus-url-copy "{put_filename}" "gsiftp://{self.hostname}:2811/tempZone/home/rods/{put_filename}"')
+            assert_command(f'iget "/tempZone/home/rods/{put_filename}" "{get_filename}"')
+            assert_command(f'diff -q "{put_filename}" "{get_filename}"')
+
+        finally:
+            os.remove(put_filename)
+            os.remove(get_filename)
+            assert_command(f'irm -f "/tempZone/home/rods/{put_filename}"')
+
     def test_upload_and_download_file_with_globus_url_copy_as_non_privileged_user(self):
         put_filename = inspect.currentframe().f_code.co_name 
         get_filename = f'{put_filename}.get'

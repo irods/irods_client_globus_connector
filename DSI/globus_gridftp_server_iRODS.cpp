@@ -1824,7 +1824,7 @@ void execute_writer_thread_operation(
         if (irods_fd < 0) {
 
             char *error_str;
-            error_str = globus_common_create_string("rcDataObjOpen failed opening '%s'\n", collection);
+            error_str = globus_common_create_string("%s:%d rcDataObjOpen failed opening '%s'\n", __FILE__, __LINE__, collection);
             result = globus_l_gfs_iRODS_make_error(error_str, irods_fd);
             free(error_str);
 
@@ -2022,6 +2022,13 @@ globus_l_gfs_iRODS_recv(
 
     iRODS_handle = (globus_l_gfs_iRODS_handle_t *) user_arg;
     
+    collection = strdup(transfer_info->pathname);
+    iRODS_l_reduce_path(collection);
+
+    irods::at_scope_exit free_collection{[&collection] {
+        std::free(collection);
+        collection = nullptr;
+    }};
 
     // start N threads to write to file
     int number_of_irods_write_threads = iRODS_handle->number_of_irods_read_write_threads;
@@ -2031,6 +2038,8 @@ globus_l_gfs_iRODS_recv(
     // the following conditions are met:
     // 1. The transfer_info->alloc_size is defined (not zero) and greater than zero.
     // 2. The alloc_size < irods_parallel_file_size_threshold_bytes.
+    // 3. Issue 101 - If filename has apostrophe then force one thread.
+    //    Note: Forcing one thread will be backed out when GenQuery is fixed.  See #104 and irods/irods#3902.
     globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: Alloc size: %lld.\n", transfer_info->alloc_size);
     if (transfer_info->alloc_size > 0)
     {
@@ -2044,6 +2053,11 @@ globus_l_gfs_iRODS_recv(
         {
             number_of_irods_write_threads = 1;
         }
+    }
+
+    // Filename has an apostrophe. Due to GenQuery bug open with replica token fails. Force one write thread.
+    if (strchr(collection, '\'') != nullptr) {
+        number_of_irods_write_threads = 1;
     }
 
     result = globus_gridftp_server_get_recv_modification_time(op, &iRODS_handle->utime);
@@ -2071,9 +2085,6 @@ globus_l_gfs_iRODS_recv(
             globus_gridftp_server_finished_transfer(op, result);
             return;
         }
-
-        collection = strdup(transfer_info->pathname);
-        iRODS_l_reduce_path(collection);
 
         //Get iRODS resource from destination path
         if (getenv(IRODS_RESOURCE_MAP) !=nullptr)
@@ -2139,7 +2150,7 @@ globus_l_gfs_iRODS_recv(
                 char *error_str;
                 error_str = globus_common_create_string("Failed to retrieve remote L1 descriptor information from iRODS, error_code = %d\n", ec);
                 result = globus_l_gfs_iRODS_make_error(error_str, ec);
-                free(error_str);
+                std::free(error_str);
                 error_str = nullptr;
                 globus_gridftp_server_finished_transfer(op, result);
                 return;
@@ -2210,9 +2221,6 @@ globus_l_gfs_iRODS_recv(
                     "iRODS: Caught error (%d) trying to update the modify time for [%s]. Continuing without updating modify time.\n", ec, collection);
         }
     }
-
-    free(collection);
-    collection = nullptr;
 
     globus_gridftp_server_finished_transfer(iRODS_handle->op, iRODS_handle->cached_res);
 
@@ -2534,17 +2542,17 @@ globus_l_gfs_iRODS_send(
             char *error_str;
             if (handle_server != nullptr)
                 if (res == 0) {
-                    error_str = globus_common_create_string("rcDataObjOpen failed opening '%s' (the DSI has succesfully resolved the PID "
-                            "through the Handle Server '%s.)", collection, handle_server);
+                    error_str = globus_common_create_string("%s:%d rcDataObjOpen failed opening '%s' (the DSI has succesfully resolved the PID "
+                            "through the Handle Server '%s.)", __FILE__, __LINE__, collection, handle_server);
                 }
                 else
                 {
-                    error_str = globus_common_create_string("rcDataObjOpen failed opening '%s' (the DSI has also tried to manage the path "
-                            "as a PID but the resolution through the Handle Server '%s' failed)", collection, handle_server);
+                    error_str = globus_common_create_string("%s:%d rcDataObjOpen failed opening '%s' (the DSI has also tried to manage the path "
+                            "as a PID but the resolution through the Handle Server '%s' failed)", __FILE__, __LINE__, collection, handle_server);
                 }
             else
             {
-                error_str = globus_common_create_string("rcDataObjOpen failed opening '%s'\n", collection);
+                error_str = globus_common_create_string("%s:%d rcDataObjOpen failed opening '%s'\n", __FILE__, __LINE__, collection);
             }
             result = globus_l_gfs_iRODS_make_error(error_str, iRODS_handle->fd);
             free(error_str);
