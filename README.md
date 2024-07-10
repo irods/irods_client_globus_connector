@@ -332,6 +332,18 @@ export irodsEnvFile=/path/to/.irodsEnv
 $DEST_BIN_DIR/testirodsmap "/C=XX/O=YYY/CN=Example User"
 ```
 
+Checksum Considerations
+-----------------------
+
+Checksums are calculated by doing a full open/read/close on the data object.  This plugin must read the file to calculate the checksum because iRODS does not provide a checksum API that meets the needs for this use case.
+
+1. The existing checksum functionality within iRODS doesn't support all of the desired checksum algorithms.
+2. The checksum algorithm in Globus is specified by the client. iRODS has one global setting for the algorithm.
+
+Due to this, uploads with checksums can be delayed while the checksum is being calculated in the client. In addition, performing the open/read/close will cause additional iRODS policy to fire.
+
+The checksums are stored in iRODS metadata so not all checksum requests require that we read the full file contents. If the data object has not been updated since the last checksum calculation, the checksum will not be recalculated.
+
 Automated Testing
 -----------------
 
