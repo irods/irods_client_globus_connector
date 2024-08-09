@@ -1,10 +1,12 @@
-FROM ubuntu:20.04
+FROM debian:12 
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=true
 
 #### install basic packages ####
 RUN apt-get update && apt-get install -y curl \
+    g++ \
+    gcc \
     ftp \
     telnet \
     libcurl4-openssl-dev \
@@ -16,10 +18,6 @@ RUN apt-get update && apt-get install -y curl \
     python3-requests \
     python3-pip \
     python3-pyodbc \
-    sudo \
-    libfuse2 \
-    libcurl3-gnutls \
-    lsof \
     wget \
     gnupg2 \
     lsb-release \
@@ -29,7 +27,10 @@ RUN apt-get update && apt-get install -y curl \
 
 #### Get and install iRODS repo ####
 RUN wget -qO - https://packages.irods.org/irods-signing-key.asc | apt-key add - && \
-    echo "deb [arch=amd64] https://packages.irods.org/apt/ $(lsb_release -sc) main" | tee /etc/apt/sources.list.d/renci-irods.list
+    echo "deb [arch=amd64] https://packages.irods.org/apt/ $(lsb_release -sc) main" | tee /etc/apt/sources.list.d/renci-irods.list \
+    && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/*
 
 #### Install icommands - used to set up, validate and tear down tests. ####
 #### Install externals and dev package to build the connector.         ####
@@ -45,7 +46,6 @@ RUN apt-get update && apt-get install -y \
     && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/*
-
 
 #### Get and install globus repo ####
 RUN wget -q https://downloads.globus.org/globus-connect-server/stable/installers/repo/deb/globus-repo_latest_all.deb && \
@@ -74,7 +74,7 @@ RUN mkdir /iRODS_DSI && chmod 777 /iRODS_DSI
 COPY start.globus.run.tests.ubuntu.sh /
 RUN chmod u+x /start.globus.run.tests.ubuntu.sh
 
-COPY install_local_irods_client_packages_ubuntu20.sh /install_local_irods_packages.sh
+COPY install_local_irods_client_packages_debian12.sh /install_local_irods_packages.sh
 RUN chmod u+x /install_local_irods_packages.sh
 
 ENTRYPOINT "/start.globus.run.tests.ubuntu.sh"

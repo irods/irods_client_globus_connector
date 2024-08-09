@@ -1,10 +1,12 @@
-FROM ubuntu:20.04
+FROM ubuntu:24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=true
 
 #### install basic packages ####
 RUN apt-get update && apt-get install -y curl \
+    g++ \
+    gcc \
     ftp \
     telnet \
     libcurl4-openssl-dev \
@@ -16,10 +18,6 @@ RUN apt-get update && apt-get install -y curl \
     python3-requests \
     python3-pip \
     python3-pyodbc \
-    sudo \
-    libfuse2 \
-    libcurl3-gnutls \
-    lsof \
     wget \
     gnupg2 \
     lsb-release \
@@ -40,12 +38,11 @@ RUN apt-get update && apt-get install -y \
     irods-icommands \
     irods-dev \
     irods-externals-cmake3.21.4-0 \
-    irods-externals-clang13.0.1-0 \
+    irods-externals-clang13.0.1-0 \ 
     irods-externals-clang-runtime13.0.1-0 \
     && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/*
-
 
 #### Get and install globus repo ####
 RUN wget -q https://downloads.globus.org/globus-connect-server/stable/installers/repo/deb/globus-repo_latest_all.deb && \
@@ -74,7 +71,7 @@ RUN mkdir /iRODS_DSI && chmod 777 /iRODS_DSI
 COPY start.globus.run.tests.ubuntu.sh /
 RUN chmod u+x /start.globus.run.tests.ubuntu.sh
 
-COPY install_local_irods_client_packages_ubuntu20.sh /install_local_irods_packages.sh
+COPY install_local_irods_client_packages_ubuntu24.sh /install_local_irods_packages.sh
 RUN chmod u+x /install_local_irods_packages.sh
 
 ENTRYPOINT "/start.globus.run.tests.ubuntu.sh"

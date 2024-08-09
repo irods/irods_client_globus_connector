@@ -12,7 +12,7 @@ tempZone
 rods' | iinit
 
 #### Add user1 as a local user for testing ####
-useradd user1 -m -s /bin/bash
+useradd user1 -m -s /usr/bin/bash
 
 #### Give user1 an environment to connect to iRODS ####
 sudo -H -u user1 bash -c "
@@ -24,7 +24,7 @@ user1' | iinit"
 
 #### configure globus certs ####
 # the folowing seems to be automatic now
-#sudo grid-ca-create -noint  # puts files in /etc/grid-security/certificates
+# sudo grid-ca-create -noint  # puts files in /etc/grid-security/certificates
 
 # this seems required to run grid-cert-request
 mkdir /var/adm
@@ -73,12 +73,12 @@ mkdir /bld_irods_client_globus_connector
 cd /bld_irods_client_globus_connector
 /opt/irods-externals/cmake3.21.4-0/bin/cmake /irods_client_globus_connector
 make -j package
-apt-get update && apt-get install -y ./*.deb
-rm *.deb
+dnf -y --nogpgcheck install *.rpm
+rm *.rpm
 
 #### Start gridftp server ####
 /usr/sbin/globus-gridftp-server -allow-root -log-module stdio:buffer=0 -threads 1 -aa -c /etc/gridftp.conf -pidfile /var/run/globus-gridftp-server.pid -log-level trace,info,warn,error -logfile /var/log/gridftp.log -no-detach -config-base-path / &
 
-#### Run All Tests ####
+#### Keep container running ####
 cd /tmp # run from /tmp so that test files are created there
 python3 /irods_client_globus_connector/tests/run_all_tests.py
