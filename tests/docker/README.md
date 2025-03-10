@@ -37,11 +37,3 @@ After this is done, make the changes to the following files to use these built p
 3. Uncomment the installation line in the `install_local_irods_client_packages_<os>.sh` files for the platforms that are to be tested. Update the version number in the deb and rpm package filenames as necessary.
 4. Update `irods.ubuntu22.Dockerfile` and comment out the line that installs the iRODS packages from the iRODS repo.
 5. Update `start.irods.ubuntu22.sh` and uncomment the line that installs the locally built iRODS packages.  Update version number as necessary.
- 
-
-Test Limitations
-----------------
-
-Currently this only runs against a Globus server running Ubuntu 22.  This will be expanded in the future.
-
-The `python run_all_tests.py` command can be run against Globus installations in other operating systems but those will need to be set up manually.  Refer to [globus start script](start.globus.ubuntu22.sh) for an example.

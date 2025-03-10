@@ -41,7 +41,7 @@ RUN wget -qO - https://packages.irods.org/irods-signing-key.asc | sudo apt-key a
     echo "deb [arch=amd64] https://packages.irods.org/apt/ $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/renci-irods.list
 
 #### Install iRODS ####
-ENV irods_version 4.3.2-0~jammy
+ENV irods_version 4.3.4-0~jammy
 
 # If testing against locally built packages, comment out the following line.
 RUN apt-get update && \
