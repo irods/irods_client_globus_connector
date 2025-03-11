@@ -216,7 +216,11 @@ class Globus_Test(TestCase):
                     ftp.nlst(f'/tempZone/home/user1/{filename1}')
 
                 # get the file
-                ftp.retrbinary(f'RETR /tempZone/home/user1/{filename2}', open(filename2, 'wb').write)
+                with open(filename2, 'wb') as f:
+                    def callback(data):
+                        f.write(data)
+                    ftp.retrbinary(f'RETR /tempZone/home/user1/{filename2}', callback)
+
 
             # verify that the file is unchanged
             assert_command(f'diff -q {filename1} {filename2}')
@@ -225,7 +229,7 @@ class Globus_Test(TestCase):
             os.remove(filename1)
             os.remove(filename2)
 
-            # remove file via ftp 
+            # remove file via ftp
             with FTP() as ftp:
                 ftp.connect(host='localhost', port=2811)
                 ftp.login(user='user1', passwd='pass')
