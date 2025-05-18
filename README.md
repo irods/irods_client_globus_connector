@@ -371,5 +371,5 @@ Copyright 1999-2006 University of Chicago
  Globus gridmap iRODS callout to map subject DNs to iRODS accounts.
 
  Author: Vladimir Mencl, University of Canterbury
- Email:  vladimir.mencl@canterbury.ac.n
+ Email:  vladimir.mencl@canterbury.ac.nz
 
