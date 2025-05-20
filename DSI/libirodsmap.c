@@ -40,7 +40,10 @@ int libirodsmap_connect(rcComm_t ** rcComm_out) {
     };
     libirodsmap_log(IRODSMAP_LOG_DEBUG, "libirodsmap_connect: connected to iRODS server (%s:%d)\n", myRodsEnv.rodsHost, myRodsEnv.rodsPort);
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     rc = clientLogin(rcComm, NULL, NULL);
+#pragma GCC diagnostic pop
     if (rc != 0) {
         libirodsmap_log(IRODSMAP_LOG_ERR,"libirodsmap_connect: clientLogin failed: %s%d\n", "", rc);
         goto connect_error;

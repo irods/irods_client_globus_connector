@@ -829,7 +829,10 @@ iRODS_connect_and_login(
     }
 
     globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s connected now logging in.\n", call_context_for_logging.c_str());
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     status = clientLogin(conn, nullptr, NULL);
+#pragma GCC diagnostic pop
     if (status != 0) {
         globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: %s logging in failed with error %d.\n", call_context_for_logging.c_str(), status);
         result = globus_l_gfs_iRODS_make_error("\'clientLogin\' failed.", status);

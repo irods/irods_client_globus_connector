@@ -23,7 +23,7 @@
 
 cmake_minimum_required (VERSION 3.11 FATAL_ERROR)
 
-find_package(IRODS 4.3.4 EXACT REQUIRED CONFIG)
+find_package(IRODS 5.0.0 EXACT REQUIRED CONFIG)
 set(IRODS_CLIENT_REVISION "0")
 set(IRODS_CLIENT_VERSION "${IRODS_VERSION}.${IRODS_CLIENT_REVISION}")
 
@@ -38,7 +38,6 @@ project (iRODS_DSI C CXX)
 
 set(CMAKE_CXX_STANDARD ${IRODS_CXX_STANDARD})
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-add_compile_options(-nostdinc++)
 
 ##### Check ENV variables ######
 if (DEFINED ENV{GLOBUS_LOCATION})
@@ -117,7 +116,6 @@ add_compile_options(-Wall -Wextra -Werror -Wno-unused-parameter)
 remove_definitions(-DIRODS_HEADER_HPP)
 add_definitions(-DIRODS_42)
 set(irods_include_path_list
-    ${IRODS_EXTERNALS_FULLPATH_CLANG}/include/c++/v1
     ${IRODS_INCLUDE_DIRS}
     ${IRODS_EXTERNALS_FULLPATH_BOOST}/include
     ${IRODS_EXTERNALS_FULLPATH_JSON}/include
@@ -130,15 +128,12 @@ set(irods_link_obj_path
     irods_common
     irods_plugin_dependencies
     "-lrt"
-    "${IRODS_EXTERNALS_FULLPATH_AVRO}/lib/libavrocpp.so"
     "${IRODS_EXTERNALS_FULLPATH_BOOST}/lib/libboost_system.so"
     "${IRODS_EXTERNALS_FULLPATH_BOOST}/lib/libboost_regex.so"
     "${IRODS_EXTERNALS_FULLPATH_BOOST}/lib/libboost_thread.so"
     "${IRODS_EXTERNALS_FULLPATH_BOOST}/lib/libboost_filesystem.so"
-    "${IRODS_EXTERNALS_FULLPATH_FMT}/lib/libfmt.so"
     "/${IRODS_PLUGINS_DIRECTORY}/network/libtcp_client.so"
     "/${IRODS_PLUGINS_DIRECTORY}/network/libssl_client.so"
-    "/${IRODS_PLUGINS_DIRECTORY}/auth/libnative_client.so"
     )
 
 if (CPACK_GENERATOR)
