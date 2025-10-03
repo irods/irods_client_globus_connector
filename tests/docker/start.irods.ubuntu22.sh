@@ -6,7 +6,7 @@ send_irods_heartbeat() {
 
 
 # If testing against locally built packages, uncomment the following line and adjust the version number in the deb files as necessary.
-#apt-get update && apt-get install -y /irods_packages/irods-database-plugin-postgres_5.0.0-0~jammy_amd64.deb /irods_packages/irods-icommands_5.0.0-0~jammy_amd64.deb /irods_packages/irods-runtime_5.0.0-0~jammy_amd64.deb /irods_packages/irods-server_5.0.0-0~jammy_amd64.deb
+#apt-get update && apt-get install -y /irods_packages/irods-database-plugin-postgres_5.0.2-0~jammy_amd64.deb /irods_packages/irods-icommands_5.0.2-0~jammy_amd64.deb /irods_packages/irods-runtime_5.0.2-0~jammy_amd64.deb /irods_packages/irods-server_5.0.2-0~jammy_amd64.deb
 
 # Start the Postgres database.
 service postgresql start

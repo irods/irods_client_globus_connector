@@ -23,8 +23,10 @@ tempZone
 user1' | iinit"
 
 #### configure globus certs ####
-# the folowing seems to be automatic now
-#sudo grid-ca-create -noint  # puts files in /etc/grid-security/certificates
+# sometimes the certs are automatically created and sometimes not
+if ! [ -f /etc/grid-security/certificates/*.0 ]; then
+    sudo grid-ca-create -noint
+fi
 
 # this seems required to run grid-cert-request
 mkdir /var/adm
@@ -71,7 +73,7 @@ echo '/tempZone/home/rods/dir1;resc1
 ### Build and install the gridftp plugin
 mkdir /bld_irods_client_globus_connector
 cd /bld_irods_client_globus_connector
-/opt/irods-externals/cmake3.21.4-0/bin/cmake /irods_client_globus_connector
+cmake /irods_client_globus_connector
 make -j package
 apt-get update && apt-get install -y ./*.deb
 rm *.deb

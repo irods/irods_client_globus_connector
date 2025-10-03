@@ -46,30 +46,6 @@ services:
             # Uncomment the following line and change the directory to test against locally
             # built packages.
             #- /local/path/to/ub22/packages:/irods_packages:ro
-    globus-ubuntu20:
-        build:
-            context: .
-            dockerfile: globus.ubuntu20.Dockerfile
-        depends_on:
-            irods:
-                condition: service_healthy
-        volumes:
-            - ../../:/irods_client_globus_connector:ro 
-            # Uncomment the following line and change the directory to test against locally
-            # built packages.
-            #- /local/path/to/ub20/packages:/irods_packages:ro
-    globus-debian11:
-        build:
-            context: .
-            dockerfile: globus.debian11.Dockerfile
-        depends_on:
-            irods:
-                condition: service_healthy
-        volumes:
-            - ../../:/irods_client_globus_connector:ro 
-            # Uncomment the following line and change the directory to test against locally
-            # built packages.
-            #- /local/path/to/debian11/packages:/irods_packages:ro
     globus-debian12:
         build:
             context: .
@@ -82,6 +58,18 @@ services:
             # Uncomment the following line and change the directory to test against locally
             # built packages.
             #- /local/path/to/debian12/packages:/irods_packages:ro
+    globus-debian13:
+        build:
+            context: .
+            dockerfile: globus.debian13.Dockerfile
+        depends_on:
+            irods:
+                condition: service_healthy
+        volumes:
+            - ../../:/irods_client_globus_connector:ro 
+            # Uncomment the following line and change the directory to test against locally
+            # built packages.
+            #- /local/path/to/debian13/packages:/irods_packages:ro
     globus-el8:
         build:
             context: .
@@ -106,3 +94,15 @@ services:
             # Uncomment the following line and change the directory to test against locally
             # built packages.
             #- /local/path/to/el9/packages:/irods_packages:ro
+    globus-el10:
+        build:
+            context: .
+            dockerfile: globus.el10.Dockerfile
+        depends_on:
+            irods:
+                condition: service_healthy
+        volumes:
+            - ../../:/irods_client_globus_connector:ro 
+            # Uncomment the following line and change the directory to test against locally
+            # built packages.
+            #- /local/path/to/el10/packages:/irods_packages:ro

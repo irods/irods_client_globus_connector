@@ -5,6 +5,7 @@ ARG APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=true
 
 #### install basic packages ####
 RUN apt-get update && apt-get install -y curl \
+    cmake \
     g++ \
     gcc \
     ftp \
@@ -40,9 +41,6 @@ RUN wget -qO - https://packages.irods.org/irods-signing-key.asc | apt-key add - 
 RUN apt-get update && apt-get install -y \
     irods-icommands \
     irods-dev \
-    irods-externals-cmake3.21.4-0 \
-    irods-externals-clang13.0.1-0 \
-    irods-externals-clang-runtime13.0.1-0 \
     && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/*
