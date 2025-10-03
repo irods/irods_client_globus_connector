@@ -17,13 +17,12 @@ docker compose build
 Then run one or more of the following to execute the test on the Globus server of your choice.
 
 ``` 
-docker compose run globus-ubuntu20
 docker compose run globus-ubuntu22
 docker compose run globus-ubuntu24
-docker compose run globus-el8
 docker compose run globus-el9
-docker compose run globus-debian11
+docker compose run globus-el10
 docker compose run globus-debian12
+docker compose run globus-debian13
 ```
 Running Tests Against Unreleased Versions of iRODS
 --------------------------------------------------

@@ -1,7 +1,11 @@
 from unittest import *
 import inspect
 import os
-import telnetlib
+try:
+    import telnetlib
+except:
+    import telnetlib3 as telnetlib
+
 import hashlib
 import zlib
 from libs.execute import *

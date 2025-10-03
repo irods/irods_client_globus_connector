@@ -1,6 +1,7 @@
-FROM rockylinux:9
+FROM rockylinux/rockylinux:10
 
-RUN dnf check-update -q >/dev/null || { [ "$?" -eq 100 ] && dnf update -y; }
+RUN dnf update -y || [ "$?" -eq 100 ] && \
+    rm -rf /tmp/*
 
 RUN \
   dnf install -y \
@@ -40,8 +41,6 @@ RUN dnf install -y \
   dnf clean all && \
   rm -rf /var/cache/dnf /var/cache/yum /tmp/*
 
-RUN python3 -m pip --no-cache-dir install xmlrunner
-
 RUN dnf install -y \
         dnf-plugin-config-manager \
     && \
@@ -60,7 +59,7 @@ RUN dnf -y install https://downloads.globus.org/globus-connect-server/stable/ins
     rm -rf /var/cache/dnf /var/cache/yum /tmp/*
 
 #### Install and configure globus specific things ####
-RUN dnf install -y globus-gridftp-server-progs \
+RUN dnf install -y globus-connect-gridftp-server-progs \
     globus-simple-ca \
     globus-gass-copy-progs \
     globus-gsi-cert-utils-progs \
@@ -71,7 +70,7 @@ RUN dnf install -y globus-gridftp-server-progs \
 
 # Disabling repo for epel because it does not grab the newest developoment packages which are
 # needed to build the Globus plugin. 
-RUN dnf --disablerepo epel install -y globus-common-devel \
+RUN dnf install -y globus-common-devel \
     globus-gridftp-server-devel \
     globus-gridmap-callout-error-devel \
     && \
@@ -101,7 +100,7 @@ RUN dnf -y install unixODBC-devel krb5-devel \
 COPY start.globus.run.tests.el.sh /
 RUN chmod u+x /start.globus.run.tests.el.sh
 
-COPY install_local_irods_client_packages_el9.sh /install_local_irods_packages.sh
+COPY install_local_irods_client_packages_el10.sh /install_local_irods_packages.sh
 RUN chmod u+x /install_local_irods_packages.sh
 
 ENTRYPOINT "/start.globus.run.tests.el.sh"
