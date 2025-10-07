@@ -1502,7 +1502,7 @@ globus_l_gfs_iRODS_command(
                 globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"rename from [%s] to [%s]\n", from_path, collection);
 
                 // determine if from_path is a collection or data object
-                dataObjCopyInp_t dataObjRenameInp;
+                dataObjCopyInp_t dataObjRenameInp{};
                 try
                 {
                     const auto object_status = fs::client::status(*iRODS_handle->conn, from_path);
