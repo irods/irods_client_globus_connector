@@ -7,6 +7,7 @@ ARG APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=true
 RUN apt-get update && \
     apt-get install -y apt-utils \
     apt-transport-https \
+    ca-certificates \
     unixodbc \
     wget \
     lsb-release \
@@ -38,8 +39,20 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* /tmp/*
 
 #### Get and install iRODS repo ####
-RUN wget -qO - https://packages.irods.org/irods-signing-key.asc | sudo apt-key add -  && \
-    echo "deb [arch=amd64] https://packages.irods.org/apt/ $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/renci-irods.list
+RUN mkdir -p /etc/apt/keyrings && \
+    wget -qO - https://packages.irods.org/irods-signing-key.asc | \
+        gpg \
+            --no-options \
+            --no-default-keyring \
+            --no-auto-check-trustdb \
+            --homedir /dev/null \
+            --no-keyring \
+            --import-options import-export \
+            --output /etc/apt/keyrings/renci-irods-archive-keyring.pgp \
+            --import \
+        && \
+    echo "deb [signed-by=/etc/apt/keyrings/renci-irods-archive-keyring.pgp arch=amd64] https://packages.irods.org/apt/ $(lsb_release -sc) main" | \
+        tee /etc/apt/sources.list.d/renci-irods.list
 
 #### Install iRODS ####
 ENV irods_version 5.0.2-0~jammy
