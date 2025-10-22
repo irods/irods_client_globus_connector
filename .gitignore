@@ -11,3 +11,5 @@ gridmap_iRODS_callout.conf
 .project
 *.pyc
 *.bu
+CMakeLists.txt.user
+*.autosave

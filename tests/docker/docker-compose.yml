@@ -70,18 +70,6 @@ services:
             # Uncomment the following line and change the directory to test against locally
             # built packages.
             #- /local/path/to/debian13/packages:/irods_packages:ro
-    globus-el8:
-        build:
-            context: .
-            dockerfile: globus.el8.Dockerfile
-        depends_on:
-            irods:
-                condition: service_healthy
-        volumes:
-            - ../../:/irods_client_globus_connector:ro 
-            # Uncomment the following line and change the directory to test against locally
-            # built packages.
-            #- /local/path/to/el8/packages:/irods_packages:ro
     globus-el9:
         build:
             context: .

@@ -54,24 +54,13 @@ RUN dnf install -y \
     dnf clean all && \
     rm -rf /var/cache/dnf /var/cache/yum /tmp/*
 
-#### Get and install globus repo ####
-RUN dnf -y install https://downloads.globus.org/globus-connect-server/stable/installers/repo/rpm/globus-repo-latest.noarch.rpm && \
-    dnf clean all && \
-    rm -rf /var/cache/dnf /var/cache/yum /tmp/*
-
 #### Install and configure globus specific things ####
 RUN dnf install -y globus-gridftp-server-progs \
     globus-simple-ca \
     globus-gass-copy-progs \
     globus-gsi-cert-utils-progs \
     globus-proxy-utils \
-    && \
-    dnf clean all && \
-    rm -rf /var/cache/dnf /var/cache/yum /tmp/*
-
-# Disabling repo for epel because it does not grab the newest developoment packages which are
-# needed to build the Globus plugin. 
-RUN dnf --disablerepo epel install -y globus-common-devel \
+    globus-common-devel \
     globus-gridftp-server-devel \
     globus-gridmap-callout-error-devel \
     && \

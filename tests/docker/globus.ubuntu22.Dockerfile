@@ -52,15 +52,6 @@ RUN apt-get update && apt-get install -y \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/*
 
-#### Get and install globus repo ####
-RUN wget -q https://downloads.globus.org/globus-connect-server/stable/installers/repo/deb/globus-repo_latest_all.deb && \
-    apt-get update && \
-    apt-get install -y ./globus-repo_latest_all.deb && \
-    rm ./globus-repo_latest_all.deb \
-    && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /tmp/*
-
 #### Install and configure globus specific things ####
 RUN apt-get update && apt-get install -y globus-gridftp-server-progs \
     globus-simple-ca \

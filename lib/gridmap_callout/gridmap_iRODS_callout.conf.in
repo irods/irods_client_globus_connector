@@ -1,0 +1,1 @@
+globus_mapping ${CMAKE_SHARED_MODULE_PREFIX}${IRODS_CALLOUT_LIBRARY_NAME} gridmap_iRODS_callout

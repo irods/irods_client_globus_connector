@@ -1,277 +1,152 @@
-##############################################################################
-# Copyright (c) 2013 CINECA (www.hpc.cineca.it)
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-#
-# Globus DSI to manage data on iRODS.
-#
-# Author: Roberto Mucci - SCAI - CINECA
-# Email:  hpc-service@cineca.it
-#
-###############################################################################
+cmake_minimum_required(VERSION 3.12...3.18 FATAL_ERROR)
+if (POLICY CMP0121)
+	# Detect invalid indices in list()
+	cmake_policy(SET CMP0121 NEW)
+endif()
+if (POLICY CMP0125)
+	# Consistent behavior for cache variables managed by find_*()
+	cmake_policy(SET CMP0125 NEW)
+endif()
+if (POLICY CMP0132)
+	# Consistent handling of compiler environment variables
+	cmake_policy(SET CMP0132 NEW)
+endif()
+if (POLICY CMP0144)
+	# Allow for uppercased <PACKAGENAME>_ROOT variables.
+	cmake_policy(SET CMP0144 NEW)
+endif()
 
-cmake_minimum_required (VERSION 3.11 FATAL_ERROR)
+list(INSERT CMAKE_MODULE_PATH 0 "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Modules")
 
-find_package(IRODS 5.0.0 REQUIRED CONFIG)
-set(IRODS_CLIENT_REVISION "0")
-set(IRODS_CLIENT_VERSION "5.0.1")
+set(IRODS_MINIMUM_VERSION "4.90.0")
+set(IRODS_MAXIMUM_VERSION "6.0.0")
+find_package(IRODS "${IRODS_MINIMUM_VERSION}...<${IRODS_MAXIMUM_VERSION}" REQUIRED)
+
+include(RequireOutOfSourceBuild)
 
 set(IRODS_CLIENT_NAME "irods-gridftp-client")
+set(IRODS_CLIENT_VERSION "5.0.1")
+set(IRODS_PACKAGE_REVISION "1")
 
-set(CMAKE_C_COMPILER ${IRODS_EXTERNALS_FULLPATH_CLANG}/bin/clang)
-set(CMAKE_CXX_COMPILER ${IRODS_EXTERNALS_FULLPATH_CLANG}/bin/clang++)
-
-include(GNUInstallDirs)
-
-project (iRODS_DSI C CXX)
+include(IrodsExternals)
+include(IrodsCXXCompiler)
 
 set(CMAKE_CXX_STANDARD ${IRODS_CXX_STANDARD})
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-##### Check ENV variables ######
-if (DEFINED ENV{GLOBUS_LOCATION})
-    message(STATUS "GLOBUS_LOCATION is defined as '$ENV{GLOBUS_LOCATION}'")
-else()
-    set(ENV{GLOBUS_LOCATION} "/usr")
-    message(STATUS "Setting unspecified GLOBUS_LOCATION to '$ENV{GLOBUS_LOCATION}'. This is the correct setting for normal builds.")
+# export-dynamic so stacktrace entries from executables have function names.
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-Wl,--export-dynamic -Wl,--enable-new-dtags -Wl,--as-needed -Wl,-z,defs")
+set(CMAKE_MODULE_LINKER_FLAGS_INIT "-Wl,--enable-new-dtags -Wl,--as-needed -Wl,-z,defs")
+set(CMAKE_SHARED_LINKER_FLAGS_INIT "-Wl,--enable-new-dtags -Wl,--as-needed -Wl,-z,defs")
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE_INIT "-Wl,--gc-sections -Wl,-z,combreloc")
+set(CMAKE_MODULE_LINKER_FLAGS_RELEASE_INIT "-Wl,--gc-sections -Wl,-z,combreloc")
+set(CMAKE_SHARED_LINKER_FLAGS_RELEASE_INIT "-Wl,--gc-sections -Wl,-z,combreloc")
+
+include(IrodsRunpathDefaults)
+
+project(${IRODS_CLIENT_NAME} VERSION "${IRODS_CLIENT_VERSION}" LANGUAGES C CXX)
+
+include("${IRODS_TARGETS_PATH}")
+include(GNUInstallDirs)
+
+if (NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+	set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build {Debug, Release}." FORCE)
+	message(STATUS "Setting unspecified CMAKE_BUILD_TYPE to '${CMAKE_BUILD_TYPE}'. This is the correct setting for normal builds.")
 endif()
 
-if (DEFINED ENV{DEST_LIB_DIR})
-    message(STATUS "DEST_LIB_DIR is defined as '$ENV{DEST_LIB_DIR}'")
-else()
-    if (IRODS_LINUX_DISTRIBUTION_NAME STREQUAL "centos")
-        set(ENV{DEST_LIB_DIR} "/usr/lib64")
-    elseif(IRODS_LINUX_DISTRIBUTION_NAME STREQUAL "ubuntu" OR IRODS_LINUX_DISTRIBUTION_NAME STREQUAL "debian")
-        set(ENV{DEST_LIB_DIR} "/usr/lib")
-    else()
-        set(ENV{DEST_LIB_DIR} "/usr/lib")
-    endif()
-    message(STATUS "Setting unspecified DEST_LIB_DIR to '$ENV{DEST_LIB_DIR}'. This is the correct setting for normal builds.")
+set(IRODS_BUILD_WITH_WERROR OFF CACHE BOOL "Choose whether to compile with -Werror.")
+
+if (IRODS_BUILD_WITH_WERROR)
+	add_compile_options(-Werror)
 endif()
 
-if (DEFINED ENV{DEST_ETC_DIR})
-    message(STATUS "DEST_ETC_DIR is defined as '$ENV{DEST_ETC_DIR}'")
-else()
-    set(ENV{DEST_ETC_DIR} "/etc/grid-security")
-    message(STATUS "Setting unspecified DEST_ETC_DIR to '$ENV{DEST_ETC_DIR}'. This is the correct setting for normal builds.")
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+	add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
 endif()
 
-if (DEFINED ENV{DEST_BIN_DIR})
-    message(STATUS "DEST_BIN_DIR is defined as '$ENV{DEST_BIN_DIR}'")
-else()
-    set(ENV{DEST_BIN_DIR} "/usr/bin")
-    message(STATUS "Setting unspecified DEST_BIN_DIR to '$ENV{DEST_BIN_DIR}'. This is the correct setting for normal builds.")
-endif()
+add_compile_options(-Wall -Wextra -Wpedantic)
 
+include(ObjectTargetHelpers)
 
-##### iRODS #####
-if (NOT IRODS_EXTERNALS_PACKAGE_ROOT)
-  set(IRODS_EXTERNALS_PACKAGE_ROOT "/opt/irods-externals" CACHE STRING "Choose the location of iRODS external packages." FORCE)
-  message(STATUS "Setting unspecified IRODS_EXTERNALS_PACKAGE_ROOT to '${IRODS_EXTERNALS_PACKAGE_ROOT}'. This is the correct setting for normal builds.")
-endif()
+find_package(CURL REQUIRED)
+find_package(nlohmann_json REQUIRED)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto SSL)
+find_package(
+	Globus
+	REQUIRED
+	COMPONENTS
+	common
+	gridftp_server
+	gridmap_callout_error
+	gsi_credential
+	gss_assist
+	gssapi_error
+	gssapi_gsi
+)
 
-macro(IRODS_MACRO_CHECK_DEPENDENCY_SET_FULLPATH DEPENDENCY_NAME DEPENDENCY_SUBDIRECTORY)
-  if (IS_DIRECTORY ${IRODS_EXTERNALS_FULLPATH_${DEPENDENCY_NAME}})
-    message(STATUS "Using user-specified value for IRODS_EXTERNALS_FULLPATH_${DEPENDENCY_NAME}: ${IRODS_EXTERNALS_FULLPATH_${DEPENDENCY_NAME}}")
-  else()
-    if (NOT IS_DIRECTORY ${IRODS_EXTERNALS_PACKAGE_ROOT}/${DEPENDENCY_SUBDIRECTORY})
-      message(FATAL_ERROR "${DEPENDENCY_NAME} not found at ${IRODS_EXTERNALS_PACKAGE_ROOT}/${DEPENDENCY_SUBDIRECTORY}")
-    endif()
-    set(IRODS_EXTERNALS_FULLPATH_${DEPENDENCY_NAME} ${IRODS_EXTERNALS_PACKAGE_ROOT}/${DEPENDENCY_SUBDIRECTORY})
-  endif()
-endmacro()
+add_subdirectory(third-party)
+add_subdirectory(lib)
 
-macro(IRODS_MACRO_CHECK_DEPENDENCY_SET_FULLPATH_ADD_TO_IRODS_PACKAGE_DEPENDENCIES_LIST DEPENDENCY_NAME DEPENDENCY_SUBDIRECTORY)
-  IRODS_MACRO_CHECK_DEPENDENCY_SET_FULLPATH(${DEPENDENCY_NAME} ${DEPENDENCY_SUBDIRECTORY})
-  list(APPEND IRODS_PACKAGE_DEPENDENCIES_LIST irods-externals-${DEPENDENCY_SUBDIRECTORY})
-endmacro()
-string(REPLACE ";" ", " IRODS_PACKAGE_DEPENDENCIES_STRING "${IRODS_PACKAGE_DEPENDENCIES_LIST}")
-#################
+include(IrodsCPackCommon)
 
-
-FIND_PACKAGE(CURL)
-IF(CURL_FOUND)
-    INCLUDE_DIRECTORIES(${CURL_INCLUDE_DIR})
-    SET(requiredlibs ${requiredlibs} ${CURL_LIBRARIES} )
-ELSE(CURL_FOUND)
-    MESSAGE(FATAL_ERROR "Could not find the CURL library and development files.")
-ENDIF(CURL_FOUND)
-
-set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
-add_definitions(-DIRODS_HEADER_HPP -DOPENSSL_API_COMPAT=10100)
-
-add_compile_options(-Wall -Wextra -Werror -Wno-unused-parameter)
-
-remove_definitions(-DIRODS_HEADER_HPP)
-add_definitions(-DIRODS_42)
-set(irods_include_path_list
-    ${IRODS_INCLUDE_DIRS}
-    ${IRODS_EXTERNALS_FULLPATH_BOOST}/include
-    ${IRODS_EXTERNALS_FULLPATH_JSON}/include
-    ${IRODS_EXTERNALS_FULLPATH_FMT}/include
-    )
-
-set(irods_link_obj_path
-    PRIVATE
-    irods_client
-    irods_common
-    irods_plugin_dependencies
-    "-lrt"
-    "${IRODS_EXTERNALS_FULLPATH_BOOST}/lib/libboost_system.so"
-    "${IRODS_EXTERNALS_FULLPATH_BOOST}/lib/libboost_regex.so"
-    "${IRODS_EXTERNALS_FULLPATH_BOOST}/lib/libboost_thread.so"
-    "${IRODS_EXTERNALS_FULLPATH_BOOST}/lib/libboost_filesystem.so"
-    "/${IRODS_PLUGINS_DIRECTORY}/network/libtcp_client.so"
-    "/${IRODS_PLUGINS_DIRECTORY}/network/libssl_client.so"
-    )
-
-if (CPACK_GENERATOR)
-  message(STATUS "CPACK_GENERATOR is defined as '${CPACK_GENERATOR}'")
-else()
-  set(CPACK_GENERATOR ${IRODS_CPACK_GENERATOR} CACHE STRING "CPack generator to use, e.g. {DEB, RPM, TGZ}." FORCE)
-  message(STATUS "Setting unspecified CPACK_GENERATOR to '${CPACK_GENERATOR}'. This is the correct setting for normal builds.")
-endif()
-
-message(STATUS "CMAKE_SYSTEM_PROCESSOR is '${CMAKE_SYSTEM_PROCESSOR}'")
-if (CPACK_GENERATOR STREQUAL "RPM")
-    set(IRODS_CLIENT_PACKAGE_FILE_NAME_SUFFIX "-${IRODS_CLIENT_VERSION}-1.${CMAKE_SYSTEM_PROCESSOR}")
-elseif(CPACK_GENERATOR STREQUAL "DEB")
-  set(IRODS_CLIENT_PACKAGE_FILE_NAME_SUFFIX "-${IRODS_CLIENT_VERSION}-${IRODS_LINUX_DISTRIBUTION_NAME}${IRODS_LINUX_DISTRIBUTION_VERSION_MAJOR}-${CMAKE_SYSTEM_PROCESSOR}")
-else()
-  set(IRODS_CLIENT_PACKAGE_FILE_NAME_SUFFIX "-${IRODS_CLIENT_VERSION}-${IRODS_LINUX_DISTRIBUTION_NAME}${IRODS_LINUX_DISTRIBUTION_VERSION_MAJOR}-${CMAKE_SYSTEM_PROCESSOR}")
-endif()
-
-set(CPACK_PACKAGE_FILE_NAME "${IRODS_CLIENT_NAME}${IRODS_CLIENT_PACKAGE_FILE_NAME_SUFFIX}")
-message(STATUS "CPACK_PACKAGE_FILE_NAME is defined as '${CPACK_PACKAGE_FILE_NAME}'")
 set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
 set(CPACK_COMPONENT_INCLUDE_TOPLEVEL_DIRECTORY OFF)
 set(CPACK_COMPONENTS_GROUPING IGNORE)
 set(CPACK_PACKAGE_VERSION ${IRODS_CLIENT_VERSION})
-set(CPACK_PACKAGE_CONTACT "Renaissance Computing Institute <info@irods.org>")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "The integrated Rule-Oriented Data System")
-set(CPACK_PACKAGE_VENDOR "Renaissance Computing Institute <info@irods.org>")
 
 set(CPACK_DEB_COMPONENT_INSTALL OFF)
-set(CPACK_DEBIAN_PACKAGE_SECTION "contrib/science")
-set(CPACK_DEBIAN_COMPRESSION_TYPE "gzip")
-set(CPACK_DEBIAN_PACKAGE_PRIORITY "extra")
-set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://irods.org")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
 set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION ON)
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 
 set(CPACK_RPM_COMPONENT_INSTALL OFF)
-set(CPACK_RPM_PACKAGE_RELEASE "1")
-set(CPACK_RPM_PACKAGE_LICENSE "BSD-3-Clause")
-set(CPACK_RPM_PACKAGE_VENDOR "iRODS Consortium")
-set(CPACK_RPM_PACKAGE_URL "https://irods.org")
+set(CPACK_RPM_PACKAGE_LICENSE "Apache-2.0")
 set(CPACK_RPM_PACKAGE_AUTOREQ 0)
 set(CPACK_RPM_PACKAGE_AUTOPROV 0)
-set(CPACK_RPM_RELOCATION_PATHS $ENV{DEST_LIB_DIR})
+set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
 
 set(CPACK_ARCHIVE_COMPONENT_INSTALL OFF)
 
-set(CPACK_DEBIAN_PACKAGE_NAME ${IRODS_CLIENT_NAME})
+# The Globus packages for Debian and Ubuntu have soversions in the package
+# names. We cannot currently discern these reliably without making dangerous
+# assumptions about the build environment. Therefore, we do not currently
+# declare dependencies on Globus packages. We do the same for EL for the sake of
+# consistency, despite the fact that the EL pacakge names are not versioned.
 
-find_package(OpenSSL)
+set(CPACK_DEBIAN_PACKAGE_NAME "${IRODS_CLIENT_NAME}")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "${IRODS_PACKAGE_DEPENDENCIES_STRING}, irods-runtime (= ${IRODS_VERSION}), libc6")
+
+get_filename_component(CURL_LIBRARY_REALPATH ${CURL_LIBRARY} REALPATH)
+get_filename_component(CURL_LIBRARY_REALNAME ${CURL_LIBRARY_REALPATH} NAME_WE)
+if (CURL_LIBRARY_REALNAME STREQUAL "libcurl-gnutls")
+	set(CPACK_DEBIAN_PACKAGE_DEPENDS "${CPACK_DEBIAN_PACKAGE_DEPENDS}, libcurl3-gnutls")
+elseif (CURL_LIBRARY_REALNAME STREQUAL "libcurl-nss")
+	set(CPACK_DEBIAN_PACKAGE_DEPENDS "${CPACK_DEBIAN_PACKAGE_DEPENDS}, libcurl3-nss")
+elseif (CURL_LIBRARY_REALNAME STREQUAL "libcurl")
+	set(CPACK_DEBIAN_PACKAGE_DEPENDS "${CPACK_DEBIAN_PACKAGE_DEPENDS}, libcurl4")
+endif()
 if (OPENSSL_VERSION VERSION_LESS "3.0.0")
-    message(STATUS "OPENSSL_VERSION < 3.0.0")
-    set(CPACK_DEBIAN_PACKAGE_DEPENDS "${IRODS_PACKAGE_DEPENDENCIES_STRING}, irods-runtime (= ${IRODS_VERSION}), libc6, libssl1.1")
+	set(CPACK_DEBIAN_PACKAGE_DEPENDS "${CPACK_DEBIAN_PACKAGE_DEPENDS}, libssl1.1")
 else()
-    message(STATUS "OPENSSL_VERSION >= 3.0.0")
-    set(CPACK_DEBIAN_PACKAGE_DEPENDS "${IRODS_PACKAGE_DEPENDENCIES_STRING}, irods-runtime (= ${IRODS_VERSION}), libc6, libssl3")
+	set(CPACK_DEBIAN_PACKAGE_DEPENDS "${CPACK_DEBIAN_PACKAGE_DEPENDS}, libssl3")
 endif()
 
 set(CPACK_RPM_PACKAGE_NAME ${IRODS_CLIENT_NAME})
-if (IRODS_LINUX_DISTRIBUTION_NAME STREQUAL "opensuse")
-    set(CPACK_RPM_PACKAGE_REQUIRES "${IRODS_PACKAGE_DEPENDENCIES_STRING}, irods-runtime = ${IRODS_VERSION}, libopenssl1_0_0")
-else()
-    set(CPACK_RPM_PACKAGE_REQUIRES "${IRODS_PACKAGE_DEPENDENCIES_STRING}, irods-runtime = ${IRODS_VERSION}, openssl")
+set(CPACK_RPM_PACKAGE_REQUIRES "${IRODS_PACKAGE_DEPENDENCIES_STRING}, irods-runtime = ${IRODS_VERSION}, (libcurl or libcurl-minimum), openssl")
+
+if (NOT CPACK_GENERATOR)
+	set(CPACK_GENERATOR ${IRODS_CPACK_GENERATOR} CACHE STRING "CPack generator to use, e.g. {DEB, RPM, TGZ}." FORCE)
+	message(STATUS "Setting unspecified CPACK_GENERATOR to ${CPACK_GENERATOR}. This is the correct setting for normal builds.")
+endif()
+
+if (CPACK_GENERATOR STREQUAL "DEB")
+	install(
+		FILES
+		"${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+		DESTINATION "${CMAKE_INSTALL_DOCDIR}/${CPACK_DEBIAN_PACKAGE_NAME}"
+		RENAME copyright
+	)
 endif()
 
 include(CPack)
-
-if (DEFINED ENV{FLAVOR})
-    message(STATUS "FLAVOR is defined as $ENV{FLAVOR}")
-    set(dsi_library_name globus_gridftp_server_iRODS_$ENV{FLAVOR})
-    set(gridmap_callout_library_name gridmap_iRODS_callout_$ENV{FLAVOR})
-    set(gridmap_callout_library_LINK_FLAGS "-lglobus_gridmap_callout_error")
-else()
-    set(dsi_library_name globus_gridftp_server_iRODS)
-    set(gridmap_callout_library_name gridmap_iRODS_callout)
-    set(gridmap_callout_library_LINK_FLAGS "-lglobus_gridmap_callout_error")
-endif()
-
-#################################
-
-message(STATUS "DSI library name will be '${dsi_library_name}'")
-message(STATUS "Gridmap callout library name will be '${gridmap_callout_library_name}'")
-
-add_library(${dsi_library_name} SHARED
-    DSI/globus_gridftp_server_iRODS.cpp
-    DSI/pid_manager.c external/cJSON.c
-    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/ADLER32Strategy.cpp
-    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/Hasher.cpp
-    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/MD5Strategy.cpp
-    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/SHA1Strategy.cpp
-    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/SHA256Strategy.cpp
-    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/SHA512Strategy.cpp
-    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/src/irods_hasher_factory.cpp
-    )
-add_library(${gridmap_callout_library_name} SHARED DSI/gridmap_iRODS_callout.c DSI/libirodsmap.c)
-
-set_target_properties(${dsi_library_name} PROPERTIES VERSION ${IRODS_CLIENT_VERSION})
-set_target_properties(${dsi_library_name} PROPERTIES LINKER_LANGUAGE CXX)
-target_link_libraries(${dsi_library_name} ${irods_link_obj_path} ${CURL_LIBRARIES})
-
-set_target_properties(${gridmap_callout_library_name} PROPERTIES LINK_FLAGS ${gridmap_callout_library_LINK_FLAGS} VERSION ${IRODS_CLIENT_VERSION})
-set_target_properties(${gridmap_callout_library_name} PROPERTIES LINKER_LANGUAGE CXX)
-target_link_libraries(${gridmap_callout_library_name} ${irods_link_obj_path} ${CURL_LIBRARIES})
-
-set(gridmap_callout_conf_name gridmap_iRODS_callout.conf)
-
-set(testirodsmap_exe "testirodsmap")
-set(testirodsmap_exe_LINK_FLAGS "-ldl -lglobus_gss_assist -lstdc++")
-add_executable(${testirodsmap_exe} DSI/testirodsmap.c DSI/libirodsmap.c)
-set_target_properties(${testirodsmap_exe} PROPERTIES LINKER_LANGUAGE CXX)
-set_target_properties(${testirodsmap_exe} PROPERTIES LINK_FLAGS ${testirodsmap_exe_LINK_FLAGS})
-target_link_libraries(${testirodsmap_exe} ${irods_link_obj_path} ${CURL_LIBRARIES})
-
-set(testpidmanager_exe "testpidmanager")
-add_executable(${testpidmanager_exe} DSI/pid_manager_test.c DSI/pid_manager.c external/cJSON.c)
-target_link_libraries(${testpidmanager_exe} ${irods_link_obj_path} "-lm -lglobus_gridftp_server" ${CURL_LIBRARIES})
-
-include_directories(
-    ${CMAKE_SOURCE_DIR}/lib/globus_hasher/include
-    ${irods_include_path_list}
-    )
-
-include_directories(
-        $ENV{GLOBUS_LOCATION}/include/globus
-        $ENV{GLOBUS_LOCATION}/lib/globus/include
-        $ENV{GLOBUS_LOCATION}/lib64/globus/include
-        ${CURL_INCLUDE_DIR}
-        DSI
-        external)
-
-if (DEFINED ENV{FLAVOR})
-    include_directories($ENV{GLOBUS_LOCATION}/include/ENV{FLAVOR})
-endif()
-
-install(TARGETS ${dsi_library_name} ${gridmap_callout_library_name} DESTINATION $ENV{DEST_LIB_DIR})
-
-install(TARGETS ${testirodsmap_exe} DESTINATION $ENV{DEST_BIN_DIR})
-install(TARGETS ${testpidmanager_exe} DESTINATION $ENV{DEST_BIN_DIR})
-configure_file(DSI/${gridmap_callout_conf_name}.in ${gridmap_callout_conf_name})
-install(FILES ${PROJECT_BINARY_DIR}/${gridmap_callout_conf_name} DESTINATION $ENV{DEST_ETC_DIR})
-
