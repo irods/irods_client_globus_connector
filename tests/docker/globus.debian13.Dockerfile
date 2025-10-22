@@ -1,10 +1,10 @@
 FROM debian:13 
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=true
 
 #### install basic packages ####
 RUN apt-get update && apt-get install -y curl \
+    ca-certificates \
     cmake \
     g++ \
     gcc \
@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y curl \
     python3-pip \
     python3-pyodbc \
     wget \
-    gnupg2 \
+    gnupg \
     lsb-release \
     && \
     apt-get clean && \

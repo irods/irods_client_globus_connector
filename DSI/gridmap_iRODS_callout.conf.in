@@ -1,1 +1,0 @@
-globus_mapping lib${gridmap_callout_library_name} gridmap_iRODS_callout
