@@ -6,7 +6,7 @@ install_manifest.txt
 *.so
 *.so.*
 testirodsmap
-gridmap_iRODS_callout.conf
+/gridmap_iRODS_callout.conf
 .cproject
 .project
 *.pyc

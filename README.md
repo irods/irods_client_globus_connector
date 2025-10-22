@@ -29,14 +29,14 @@ The Globus plugin for iRODS can be installed from pre-built packages.
 
 - Install the packages as follows:
 
-	Ubuntu:
+	Ubuntu/Debian:
 	```
 	sudo apt-get install irods-gridftp-client
 	```
 
-	CentOS:
+	Enterprise Linux:
 	```
-	sudo yum -y install irods-gridftp-client
+	sudo dnf -y install irods-gridftp-client
 	```
 
 - The pre-built packages install the lib files in /usr/lib, the configuration file in /etc/grid-security, and the test binary programs in /usr/bin.
@@ -48,33 +48,19 @@ Building the Plugin and Installing in Custom Location
 
 Prerequisites
 --------------------------------
-- CMake 2.7 or higher (part of irods-externals in iRODS 4.2.X)
+- CMake 3.18 or higher
 
 - iRODS with the Development Tools and Runtime Libraries packages: follow the instructions at https://packages.irods.org/ to add the iRODS repository to your package manager. Installation instructions can be found at https://irods.org/download/
 
-- For 4.2, the iRODS external packages need to be installed. These provide a consistent build environment (cmake, clang, etc.) to build the iRODS Globus Connector:
-
-	Ubuntu:
-	```
-	sudo apt-get -y install irods-externals-cmake3.21.4-0 irods-externals-clang13.0.0-0 irods-dev irods-runtime
-	```
-
-	CentOS:
-	sudo yum -y install irods-externals-cmake3.21.4-0 irods-externals-clang13.0.0-0 irods-devel irods-runtime rpm-build
-	```
-
 - Globus and other packages:
 
-	Ubuntu:
+	Ubuntu/Debian:
 	```
-	curl -LOs http://downloads.globus.org/toolkit/gt6/stable/installers/repo/deb/globus-toolkit-repo_latest_all.deb
-	sudo dpkg -i globus-toolkit-repo_latest_all.deb
-	sudo sed -i /etc/apt/sources.list.d/globus-toolkit-6-stable*.list \
-		-e 's/\^# deb /deb /'
-	sudo sed -i /etc/apt/sources.list.d/globus-connect-server-stable*.list \
-		-e 's/^# deb /deb /'
-	sudo apt-key add /usr/share/globus-toolkit-repo/RPM-GPG-KEY-Globus
-	sudo apt update
+	sudo apt-get update
+	sudo apt-get install -y wget gnupg ca-certificates
+	wget https://downloads.globus.org/globus-connect-server/stable/installers/repo/deb/globus-repo_latest_all.deb
+	sudo apt-get install ./globus-repo_latest_all.deb
+	sudo apt-get update
 	sudo apt-get install -y globus-gridftp-server-progs globus-gass-copy-progs libglobus-gss-assist-dev
 	sudo apt-get install -y libglobus-common-dev libglobus-gridftp-server-dev libglobus-gridmap-callout-error-dev
 	sudo apt-get install -y libcurl4-openssl-dev
@@ -86,15 +72,15 @@ Prerequisites
 	sudo apt-get install -y globus-proxy-utils
 	```
 
-	CentOS:
+	Enterprise Linux:
 	```
-	sudo yum install -y epel-release
-	sudo yum install -y https://downloads.globus.org/globus-connect-server/stable/installers/repo/rpm/globus-repo-latest.noarch.rpm
-	sudo yum install -y globus-gridftp-server-progs globus-gass-copy-progs
-	sudo yum --disablerepo epel install -y globus-common-devel globus-gridftp-server-devel globus-gridmap-callout-error-devel
-	sudo yum install -y libcurl-devel git gcc-c++ make
-	sudo yum install -y globus-gsi-cert-utils-progs
-	sudo yum install -y globus-proxy-utils
+	sudo dnf install -y epel-release
+	sudo dnf install -y https://downloads.globus.org/globus-connect-server/stable/installers/repo/rpm/globus-repo-latest.noarch.rpm
+	sudo dnf install -y globus-gridftp-server-progs globus-gass-copy-progs
+	sudo dnf --disablerepo epel install -y globus-common-devel globus-gridftp-server-devel globus-gridmap-callout-error-devel
+	sudo dnf install -y libcurl-devel git gcc-c++ make
+	sudo dnf install -y globus-gsi-cert-utils-progs
+	sudo dnf install -y globus-proxy-utils
 	```
 
 
@@ -111,12 +97,7 @@ Building iRODS Globus Connector with CMake
 	mkdir /<preferred_path>
 	```
 
-3. Set the `PATH` so that the correct version of cmake will be found:
-	```
-	export PATH=/opt/irods-externals/cmake3.21.4-0/bin:$PATH
-	```
-
-4. (Optional) Set some additional variables if desired/necessary:
+5. (Optional) Set some additional variables if desired/necessary:
 	```
 	export GLOBUS_LOCATION="/<preferred_path>"
 	export DEST_LIB_DIR="/<preferred_path>"
@@ -133,7 +114,7 @@ Building iRODS Globus Connector with CMake
 	export C_INCLUDE_PATH=/usr/include/globus
 	```
 
-5. Build and install the iRODS Globus Connector:
+6. Build and install the iRODS Globus Connector:
 	```
 	cd irods_client_globus_connector
 	mkdir build
@@ -141,7 +122,7 @@ Building iRODS Globus Connector with CMake
 	cmake ..
 	```
 
-6. Install or build the package
+7. Install or build the package
 	```
 	make install
 	```
