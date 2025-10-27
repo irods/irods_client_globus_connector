@@ -23,50 +23,83 @@
  *
  */
 
-//#pragma GCC diagnostic ignored "-Wregister"`
-extern "C" {
-  #include "globus_gridftp_server.h"
-  #include "globus_range_list.h"
-}
-//#pragma GCC diagnostic pop
+// local includes
+#include "Hasher.hpp"
+#include "circular_buffer.hpp"
+#include "irods_hasher_factory.hpp"
+#include "pid_manager.h"
 
-#ifdef IRODS_HEADER_HPP
-  #include <irods/rodsClient.hpp>
-#else
-  #include <irods/rodsClient.h>
-#endif
-
+// irods includes
+#include <irods/base64.hpp>
+#include <irods/collCreate.h>
+#include <irods/dataObjClose.h>
+#include <irods/dataObjInpOut.h>
+#include <irods/dataObjLseek.h>
+#include <irods/dataObjOpen.h>
+#include <irods/dataObjRead.h>
+#include <irods/dataObjRename.h>
+#include <irods/dataObjUnlink.h>
+#include <irods/fileLseek.h>
+#include <irods/filesystem.hpp>
+#include <irods/get_file_descriptor_info.h>
+#include <irods/getRodsEnv.h>
+#include <irods/irods_at_scope_exit.hpp>
+#include <irods/irods_error.hpp>
 #include <irods/irods_query.hpp>
 #include <irods/irods_string_tokenize.hpp>
 #include <irods/irods_virtual_path.hpp>
-#include <irods_hasher_factory.hpp>
-#include <irods/irods_at_scope_exit.hpp>
-#include <irods/get_file_descriptor_info.h>
+#include <irods/miscUtil.h>
+#include <irods/modAVUMetadata.h>
+#include <irods/rcConnect.h>
+#include <irods/rcMisc.h>
 #include <irods/replica_close.h>
+#include <irods/rmColl.h>
+#include <irods/rodsClient.h>
+#include <irods/rodsDef.h>
+#include <irods/rodsLog.h>
+#include <irods/rodsType.h>
+#include <irods/stringOpr.h>
 #include <irods/thread_pool.hpp>
-#include <irods/filesystem.hpp>
-#include <irods/base64.hpp>
 #include <irods/touch.h>
+
+// globus includes
+extern "C" {
+#include <globus_extension.h>
+#include <globus_fifo.h>
+#include <globus_gridftp_server.h>
+#include <globus_libc.h>
+#include <globus_range_list.h>
+#include <globus_thread.h>
+#include <globus_types.h>
+}
 
 // boost includes
 #include <boost/algorithm/string.hpp>
+#include <boost/format.hpp>
 #include <boost/lexical_cast.hpp>
 
-#include <string>
+#include <nlohmann/json.hpp>
 
-#include "pid_manager.h"
-#include <cstring>
-#include <cstdio>
-#include <ctime>
-#include <unistd.h>
-#include <dlfcn.h>
-#include <pthread.h>
-#include <iomanip>
+#include <chrono>
 #include <condition_variable>
+#include <cstdio>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <iomanip>
+#include <ios>
 #include <map>
+#include <mutex>
+#include <sstream>
+#include <string>
+#include <vector>
 
-// local includes
-#include "circular_buffer.hpp"
+#include <sys/stat.h>
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <unistd.h>
 
 #define MAX_DATA_SIZE 1024
 

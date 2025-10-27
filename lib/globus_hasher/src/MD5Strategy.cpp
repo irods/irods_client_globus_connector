@@ -1,12 +1,15 @@
 #include "MD5Strategy.hpp"
 
+#include <irods/irods_error.hpp>
+
+#include <boost/any.hpp>
+
+#include <openssl/md5.h>
+
+#include <iomanip>
 #include <iostream>
 #include <sstream>
-#include <iomanip>
-
-#include <cstring>
-#include <openssl/md5.h>
-#include "irods/irods_stacktrace.hpp"
+#include <string>
 
 namespace irods::globus {
 

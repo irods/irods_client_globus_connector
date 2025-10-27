@@ -8,13 +8,20 @@
  *
  */
 
-#ifdef IRODS_HEADER_HPP
-  #include "irods/rodsClient.hpp"
-#else
-  #include "irods/rodsClient.h"
-#endif
+#include <irods/execCmd.h>
+#include <irods/genQuery.h>
+#include <irods/getRodsEnv.h>
+#include <irods/objInfo.h>
+#include <irods/rcConnect.h>
+#include <irods/rcMisc.h>
+#include <irods/rodsClient.h>
+#include <irods/rodsErrorTable.h>
+#include <irods/rodsGenQuery.h>
+
+#include <errno.h>
 #include <stdio.h>
-#include <time.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "libirodsmap.h"

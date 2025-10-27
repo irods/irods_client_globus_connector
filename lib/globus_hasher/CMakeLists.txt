@@ -23,7 +23,6 @@ objects_link_libraries(
 	PUBLIC
 	irods_common
 	PRIVATE
-	Globus::gridftp_server
 	OpenSSL::Crypto
 )
 target_include_directories(

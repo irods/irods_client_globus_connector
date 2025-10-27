@@ -2,10 +2,12 @@
 #define _HASHER_HPP_
 
 #include "HashStrategy.hpp"
-#include "irods/irods_error.hpp"
+
+#include <irods/irods_error.hpp>
+
+#include <boost/any.hpp>
 
 #include <string>
-#include <boost/any.hpp>
 
 namespace irods::globus {
 

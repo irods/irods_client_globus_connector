@@ -1,6 +1,7 @@
 //pid_manager test class
-#include <stdio.h>
 #include "pid_manager.h"
+
+#include <stdio.h>
 
 int main()
 {

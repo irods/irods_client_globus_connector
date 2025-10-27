@@ -1,8 +1,11 @@
 #ifndef __IRODS_HASHER_FACTORY_HPP__
 #define __IRODS_HASHER_FACTORY_HPP__
 
-#include "irods/irods_error.hpp"
 #include "Hasher.hpp"
+
+#include <irods/irods_error.hpp>
+
+#include <string>
 
 namespace irods::globus {
 

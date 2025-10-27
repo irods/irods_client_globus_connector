@@ -3,6 +3,12 @@
 
 #include "HashStrategy.hpp"
 
+#include <irods/irods_error.hpp>
+
+#include <boost/any.hpp>
+
+#include <string>
+
 namespace irods::globus {
     extern const std::string ADLER32_NAME;
     class ADLER32Strategy : public HashStrategy {

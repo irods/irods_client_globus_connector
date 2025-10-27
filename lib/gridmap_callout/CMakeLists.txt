@@ -25,7 +25,6 @@ target_link_libraries(
 	Globus::gss_assist
 	Globus::gssapi_error
 	Globus::gssapi_gsi
-	OpenSSL::SSL
 )
 target_link_objects(
 	gridmap_iRODS_callout

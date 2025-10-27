@@ -3,6 +3,12 @@
 
 #include "HashStrategy.hpp"
 
+#include <irods/irods_error.hpp>
+
+#include <boost/any.hpp>
+
+#include <string>
+
 namespace irods::globus {
     extern const std::string SHA1_NAME;
     class SHA1Strategy : public HashStrategy {

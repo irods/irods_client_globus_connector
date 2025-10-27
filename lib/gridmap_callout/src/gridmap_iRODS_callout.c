@@ -12,26 +12,21 @@
  *
  */
 
-#include "globus_common.h"
-#include "gssapi.h"
-#include "globus_gss_assist.h"
-#include "globus_gsi_credential.h"
-#include "globus_gridmap_callout_error.h"
-
-#include "globus_gridftp_server.h"
-
-#include <stdio.h>
-#include <time.h>
-#include <unistd.h>
-
-
-#include <stdlib.h>
-#include <openssl/ssl.h>
-
 #include "libirodsmap.h"
 
-#include <sys/types.h>
-#include <sys/wait.h>
+#include <globus_gridftp_server.h>
+#include <globus_gridmap_callout_error.h>
+#include <globus_gsi_credential.h>
+#include <globus_gss_assist.h>
+#include <globus_libc.h>
+#include <globus_module.h>
+#include <globus_types.h>
+#include <gssapi.h>
+
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define IRODS_PREMAP_SCRIPT "IRODS_PREMAP_SCRIPT"
 
@@ -336,4 +331,3 @@ error:
 void libirodsmap_log(int level, const char * message, const char * param, int status) {
     globus_gfs_log_message(level, message, param, status);
 }
-

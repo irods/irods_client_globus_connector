@@ -2,8 +2,10 @@
 #define _HASH_STRATEGY_HPP_
 
 #include <irods/irods_error.hpp>
-#include <string>
+
 #include <boost/any.hpp>
+
+#include <string>
 
 namespace irods::globus {
 

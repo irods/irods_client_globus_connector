@@ -1,13 +1,6 @@
 #ifndef PID_MANAGER_H_INCLUDED
 #define PID_MANAGER_H_INCLUDED
 
-#include <stdbool.h>
-#include <stdlib.h>
-#include <string.h>
-#include <curl/curl.h>
-#include "cJSON.h"
-#include "globus_gridftp_server.h"
-
 #ifdef __cplusplus
 extern "C"
 {

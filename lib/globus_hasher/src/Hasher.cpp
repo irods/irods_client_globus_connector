@@ -1,11 +1,12 @@
 #include "Hasher.hpp"
+#include "HashStrategy.hpp"
 
-#include <iostream>
-#include <algorithm>
+#include <irods/irods_error.hpp>
+#include <irods/rodsErrorTable.h>
+
 #include <boost/algorithm/string.hpp>
 
-#include "irods/rodsErrorTable.h"
-#include "irods/irods_stacktrace.hpp"
+#include <string>
 
 namespace irods::globus {
 

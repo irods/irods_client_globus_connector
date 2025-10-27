@@ -1,9 +1,15 @@
 #ifndef IRODS_RING_BUFFER_HPP
 #define IRODS_RING_BUFFER_HPP
 
-#include <boost/circular_buffer.hpp>
 #include "lock_and_wait_strategy.hpp"
+
+#include <boost/circular_buffer.hpp>
+
+#include <cstddef>
+#include <functional>
 #include <iterator>
+#include <memory>
+#include <utility>
 
 namespace irods {
 namespace experimental {

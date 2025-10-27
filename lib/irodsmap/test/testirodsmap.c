@@ -1,7 +1,7 @@
+#include "libirodsmap.h"
+
 #include <stdio.h>
 #include <unistd.h>
-
-#include "libirodsmap.h"
 
 int main(int argc, char **argv)
 {
@@ -24,4 +24,3 @@ void libirodsmap_log(int level, const char * message, const char * param, int st
     fprintf(stderr,"Level(%d) ", level);
     fprintf(stderr, message, param, status);
 }
-

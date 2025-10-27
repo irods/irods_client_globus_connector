@@ -1,17 +1,20 @@
 #include "irods_hasher_factory.hpp"
 #include "checksum.hpp"
+#include "HashStrategy.hpp"
+#include "Hasher.hpp"
 #include "MD5Strategy.hpp"
 #include "SHA256Strategy.hpp"
 #include "SHA512Strategy.hpp"
 #include "ADLER32Strategy.hpp"
 #include "SHA1Strategy.hpp"
-#include "irods/rodsErrorTable.h"
-#include <sstream>
+
+#include <irods/irods_error.hpp>
+#include <irods/rodsErrorTable.h>
+
 #include <boost/unordered_map.hpp>
 
-extern "C" {
-  #include "globus_gridftp_server.h"
-}
+#include <sstream>
+#include <string>
 
 namespace irods::globus {
 
@@ -74,5 +77,3 @@ namespace irods::globus {
     } // get_hasher_scheme_from_checksum
 
 }; // namespace irods::globus
-
-

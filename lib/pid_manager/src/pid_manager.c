@@ -1,5 +1,18 @@
 #include "pid_manager.h"
 
+#include <globus_gridftp_server.h>
+
+#include <curl/curl.h>
+#include <curl/easy.h>
+
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// needs system includes first
+#include "cJSON.h"
+
 struct string {
   char *ptr;
   size_t len;
@@ -108,5 +121,3 @@ int manage_pid(char *pid_handle_URL, char *PID,  char **URL) {
     }
     return 1;
 }
-
-

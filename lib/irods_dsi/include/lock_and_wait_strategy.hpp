@@ -1,9 +1,11 @@
 #ifndef IRODS_LOCK_AND_WAIT_STRATEGY_HPP
 #define IRODS_LOCK_AND_WAIT_STRATEGY_HPP
 
-#include <functional>
-#include <condition_variable>
 #include <chrono>
+#include <condition_variable>
+#include <exception>
+#include <functional>
+#include <mutex>
 
 namespace irods {
 namespace experimental {
