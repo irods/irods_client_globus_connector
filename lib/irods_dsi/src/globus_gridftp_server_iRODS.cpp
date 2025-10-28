@@ -607,7 +607,7 @@ iRODS_l_stat_dir(
     globus_gfs_stat_t **                out_stat,
     int *                               out_count,
     char *                              start_dir,
-    char *                              username)
+    [[maybe_unused]] char *             username)
 {
     int                                 status;
     char *                              tmp_s;
@@ -2778,16 +2778,16 @@ globus_l_gfs_iRODS_send(
 static
 void
 globus_l_gfs_iRODS_net_read_cb(
-    globus_gfs_operation_t              op,
-    globus_result_t                     result,
-    globus_byte_t *                     buffer,
-    globus_size_t                       nbytes,
-    globus_off_t                        offset,
-    globus_bool_t                       eof,
-    void *                              user_arg)
+    [[maybe_unused]] globus_gfs_operation_t op,
+    globus_result_t                         result,
+    globus_byte_t *                         buffer,
+    globus_size_t                           nbytes,
+    globus_off_t                            offset,
+    globus_bool_t                           eof,
+    void *                                  user_arg)
 {
-    globus_l_gfs_iRODS_handle_t *       iRODS_handle;
-    //int                                 bytes_written;
+    globus_l_gfs_iRODS_handle_t *           iRODS_handle;
+    //int                                     bytes_written;
 
 
     iRODS_handle = (globus_l_gfs_iRODS_handle_t *) user_arg;
@@ -2908,11 +2908,11 @@ globus_l_gfs_iRODS_read_from_net(
 static
 void
 globus_l_gfs_net_write_cb(
-    globus_gfs_operation_t              op,
-    globus_result_t                     result,
-    globus_byte_t *                     buffer,
-    globus_size_t                       nbytes,
-    void *                              user_arg)
+    [[maybe_unused]] globus_gfs_operation_t op,
+    globus_result_t                         result,
+    [[maybe_unused]] globus_byte_t *        buffer,
+    [[maybe_unused]] globus_size_t          nbytes,
+    void *                                  user_arg)
 {
     globus_l_iRODS_read_ahead_t * rh = (globus_l_iRODS_read_ahead_t *) user_arg;
     if (rh == nullptr)
