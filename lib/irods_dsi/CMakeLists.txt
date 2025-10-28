@@ -19,6 +19,7 @@ target_link_libraries(
 	globus_gridftp_server_iRODS
 	PRIVATE
 	irods_client
+	fmt::fmt
 	Globus::common
 	Globus::gridftp_server
 )

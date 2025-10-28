@@ -70,6 +70,7 @@ include(ObjectTargetHelpers)
 
 find_package(CURL REQUIRED)
 find_package(nlohmann_json REQUIRED)
+find_package(fmt 8.1.1 REQUIRED)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 find_package(
 	Globus

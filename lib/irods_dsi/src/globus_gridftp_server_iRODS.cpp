@@ -75,10 +75,11 @@ extern "C" {
 
 // boost includes
 #include <boost/algorithm/string.hpp>
-#include <boost/format.hpp>
 #include <boost/lexical_cast.hpp>
 
 #include <nlohmann/json.hpp>
+
+#include <fmt/format.h>
 
 #include <chrono>
 #include <condition_variable>
@@ -1607,11 +1608,11 @@ globus_l_gfs_iRODS_command(
                // https://github.com/irods/irods/issues/4697
                // https://github.com/irods/irods_client_globus_connector/issues/77
                std::string metadata_query_str =
-                    boost::str(boost::format(
+                    fmt::format(
                     "select META_DATA_ATTR_VALUE, META_DATA_ATTR_UNITS, MIN(DATA_MODIFY_TIME) "
-                    "where META_DATA_ATTR_NAME = '%s' AND DATA_NAME = '%s' AND COLL_NAME = '%s' AND DATA_REPL_STATUS = '1'") %
-                    checksum_avu_name %
-                    data_name %
+                    "where META_DATA_ATTR_NAME = '{}' AND DATA_NAME = '{}' AND COLL_NAME = '{}' AND DATA_REPL_STATUS = '1'",
+                    checksum_avu_name,
+                    data_name,
                     coll_name);
 
                 std::string checksum_value;
