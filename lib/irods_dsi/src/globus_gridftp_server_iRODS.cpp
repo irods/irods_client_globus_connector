@@ -95,6 +95,7 @@ extern "C" {
 #include <string>
 #include <vector>
 
+#include <alloca.h>
 #include <sys/stat.h>
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -225,7 +226,7 @@ globus_version_t local_version =
 
 int convert_base64_to_hex_string(const std::string& base64_str, const int& bit_count, std::string& out_str) {
 
-    unsigned char out[bit_count / 8];
+    unsigned char* out = static_cast<unsigned char*>(alloca(sizeof(unsigned char) * (bit_count / 8)));
     unsigned long out_len = bit_count / 8;
 
     int ret = irods::base64_decode(reinterpret_cast<const unsigned char*>(base64_str.c_str()), base64_str.size(), out, &out_len);
@@ -1172,7 +1173,7 @@ globus_l_gfs_iRODS_stat(
             if (isPID == GLOBUS_TRUE)
             {
 
-                char PID[i + 1];
+                char* PID = static_cast<char*>(alloca(sizeof(char) * (i + 1)));
                 strncpy(PID, initPID, i);
                 PID[i] = '\0';
 
@@ -1329,7 +1330,7 @@ globus_result_t globus_l_gfs_iRODS_realpath(
                 break;
             }
         }
-        char PID[i + 1];
+        char* PID = static_cast<char*>(alloca(sizeof(char) * (i + 1)));
         strncpy(PID, initPID, i);
         PID[i] = '\0';
 
@@ -2365,7 +2366,7 @@ globus_l_gfs_iRODS_send(
                     break;
                 }
             }
-            char PID[i + 1];
+            char* PID = static_cast<char*>(alloca(sizeof(char) * (i + 1)));
             strncpy(PID, initPID, i);
             PID[i] = '\0';
 
