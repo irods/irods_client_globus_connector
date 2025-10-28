@@ -31,7 +31,7 @@ set_target_properties(
 
 add_executable(
 	testpidmanager
-	"${CMAKE_CURRENT_SOURCE_DIR}/test/pid_manager_test.c"
+	"${CMAKE_CURRENT_SOURCE_DIR}/test/pid_manager_test.cpp"
 )
 target_link_objects(
 	testpidmanager
