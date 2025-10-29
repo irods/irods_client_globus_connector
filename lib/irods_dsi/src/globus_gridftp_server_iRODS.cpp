@@ -1560,7 +1560,7 @@ globus_l_gfs_iRODS_command(
                 rstrcpy( dataObjRenameInp.destDataObjInp.objPath, collection, MAX_NAME_LEN );
                 rstrcpy( dataObjRenameInp.srcDataObjInp.objPath, from_path, MAX_NAME_LEN );
                 free(from_path);
-                status = rcDataObjRename(iRODS_handle->conn, &dataObjRenameInp); 
+                status = rcDataObjRename(iRODS_handle->conn, &dataObjRenameInp);
             }
             break;
 
@@ -2057,7 +2057,7 @@ globus_l_gfs_iRODS_recv(
     int result;
 
     iRODS_handle = (globus_l_gfs_iRODS_handle_t *) user_arg;
-    
+
     collection = strdup(transfer_info->pathname);
     iRODS_l_reduce_path(collection);
 
@@ -2068,7 +2068,7 @@ globus_l_gfs_iRODS_recv(
 
     // start N threads to write to file
     int number_of_irods_write_threads = iRODS_handle->number_of_irods_read_write_threads;
-  
+
     // Make a decision about the number of write threads based on the file size provided
     // to us (transfer_info->alloc_size). Keep the number of write threads as it is unless
     // the following conditions are met:
@@ -2172,7 +2172,7 @@ globus_l_gfs_iRODS_recv(
             const auto j_in = nlohmann::json{{"fd", iRODS_handle->fd}}.dump();
 
             char* j_out{};
-            irods::at_scope_exit clean_up_j_out{[&j_out] { 
+            irods::at_scope_exit clean_up_j_out{[&j_out] {
                 if (j_out) {
                     std::free(j_out);
                 }
@@ -2244,7 +2244,7 @@ globus_l_gfs_iRODS_recv(
     memset (&dataObjCloseInp, 0, sizeof (dataObjCloseInp));
     dataObjCloseInp.l1descInx = iRODS_handle->fd;
     rcDataObjClose(iRODS_handle->conn, &dataObjCloseInp);
-    
+
     // update the modify time if preservation option selected
     if (iRODS_handle->utime > 0)
     {

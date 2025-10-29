@@ -73,18 +73,18 @@ connect_error:
 
 /** Add to inxValPair a SQL condition for equality on column inx to value value_to_check */
 int libirodsmap_add_sqlcond(inxValPair_t *inxValPair, int inx, const char *value_to_check) {
-	char * condStr;
+    char * condStr;
 
-	// NOTE: no need to check for special characters ("'") - even with
-	// plain substitution, rcGenQuery interprets only the leading and
-	// trailing "'" as special and correctly handles queries with DNs
-	// containing "'" (e.g., CN=John O'Brien)
-	int extra_chars = 3; // we use "='%s'"
-	condStr = malloc(strlen(value_to_check)+extra_chars+1);
-	if (condStr == NULL) return ENAMETOOLONG;
+    // NOTE: no need to check for special characters ("'") - even with
+    // plain substitution, rcGenQuery interprets only the leading and
+    // trailing "'" as special and correctly handles queries with DNs
+    // containing "'" (e.g., CN=John O'Brien)
+    int extra_chars = 3; // we use "='%s'"
+    condStr = malloc(strlen(value_to_check)+extra_chars+1);
+    if (condStr == NULL) return ENAMETOOLONG;
 
-	sprintf(condStr,"='%s'",value_to_check);
-	//libirodsmap_log(IRODSMAP_LOG_DEBUG, "libirodsmap_query_dn: DEBUG: adding condition %s (column %d)\n", condStr, inx);
+    sprintf(condStr,"='%s'",value_to_check);
+    //libirodsmap_log(IRODSMAP_LOG_DEBUG, "libirodsmap_query_dn: DEBUG: adding condition %s (column %d)\n", condStr, inx);
 
     // Useful helper method:
     // int addInxVal (inxValPair_t *inxValPair, int inx, char *value);
@@ -120,8 +120,8 @@ int libirodsmap_query_dn(rcComm_t * rcComm, const char * dn, char ** user, char 
     // prepare query input in qi
     qi = calloc(1, sizeof(genQueryInp_t));
     if (qi == NULL) {
-    	rc = ENAMETOOLONG;
-    	goto query_error;
+        rc = ENAMETOOLONG;
+        goto query_error;
     }
 
     qi->maxRows = 10; // must specify non-zero - but really only want one result
@@ -138,72 +138,72 @@ int libirodsmap_query_dn(rcComm_t * rcComm, const char * dn, char ** user, char 
 
     // Optionally, if desired_user/zone have been set, add these as conditions too.
     if (desired_user != NULL)
-    	if ( (rc = libirodsmap_add_sqlcond(&qi->sqlCondInp, COL_USER_NAME, desired_user)) != 0) goto query_error;
+        if ( (rc = libirodsmap_add_sqlcond(&qi->sqlCondInp, COL_USER_NAME, desired_user)) != 0) goto query_error;
     if (desired_zone != NULL)
-    	if ( (rc = libirodsmap_add_sqlcond(&qi->sqlCondInp, COL_USER_ZONE, desired_zone)) != 0) goto query_error;
+        if ( (rc = libirodsmap_add_sqlcond(&qi->sqlCondInp, COL_USER_ZONE, desired_zone)) != 0) goto query_error;
 
     // invoke: int rcGenQuery (rcComm_t *conn, genQueryInp_t *genQueryInp, genQueryOut_t **genQueryOut)
     rc = rcGenQuery(rcComm, qi, &qo);
 
     // check genquery result
     if (rc != 0) {
-    	// if the error is not CAT_NO_ROWS_FOUND, log it
+        // if the error is not CAT_NO_ROWS_FOUND, log it
         if (rc != CAT_NO_ROWS_FOUND)
             libirodsmap_log(IRODSMAP_LOG_ERR,"libirodsmap_query_dn: rcGenQuery failed: %s%d\n", "", rc);
         else
-        	libirodsmap_log(IRODSMAP_LOG_INFO,"libirodsmap_query_dn: DN was not found: %s (rc %d)\n", dn, rc);
+            libirodsmap_log(IRODSMAP_LOG_INFO,"libirodsmap_query_dn: DN was not found: %s (rc %d)\n", dn, rc);
 
         goto query_error;
     };
 
     // rcGenQuery has succeeded.
-	// We should see qo->rowCnt=1, qo->attriCnt=2
-	if (qo->rowCnt==1 && qo->attriCnt==2) {
-	    // qo->sqlResult is array sqlResult[attriCnt] where .value has values for
-	    // all rows (seek in the string with row number - but we don't have to with just one row)
-	    int attrIdx;
-	    *user=NULL;
-	    *zone=NULL;
-	    for (attrIdx=0; attrIdx < qo->attriCnt; attrIdx++) {
-			if (qo->sqlResult[attrIdx].attriInx==COL_USER_NAME) {
-				*user=strdup(qo->sqlResult[attrIdx].value);
-			    libirodsmap_log(IRODSMAP_LOG_DEBUG, "libirodsmap_query_dn: rcGenQuery returned user %s (rc=%d)\n", *user, rc);
-			};
-			if (qo->sqlResult[attrIdx].attriInx==COL_USER_ZONE) {
-				*zone=strdup(qo->sqlResult[attrIdx].value);
-			    libirodsmap_log(IRODSMAP_LOG_DEBUG, "libirodsmap_query_dn: rcGenQuery returned zone %s (rc=%d)\n", *zone, rc);
-			};
-	    };
-	    // last check: if both user and zone are set.
-	    // If not, either something went wrong with the query, or stdup failed
-	    if (*user == NULL || *zone == NULL) {
-	    	rc = ENAMETOOLONG;
-	    	//free what has been allocated
-	    	if (*user != NULL) { free(*user); *user=NULL; };
-	    	if (*zone != NULL) { free(*zone); *zone=NULL; };
-	    }
-	    // in this case, rc == 0
-	} else {
-		// if we did not get exactly one row with two attributes, we mark it as a failure
-		rc = CAT_NO_ROWS_FOUND;
-		libirodsmap_log(IRODSMAP_LOG_ERR,"libirodsmap_query_dn: rcGenQuery returned %s%d rows\n", "", qo->rowCnt);
-		libirodsmap_log(IRODSMAP_LOG_ERR,"libirodsmap_query_dn: rcGenQuery returned %s%d attributes\n", "", qo->attriCnt);
-	}
-	// only if rcGenQuery was successful we free genQuery_out
-	// And we use freeGenQueryOut which dives into the data structures
-	// (and also sets the pointer to NULL - that's why it's passed by reference)
-	freeGenQueryOut(&qo);
+    // We should see qo->rowCnt=1, qo->attriCnt=2
+    if (qo->rowCnt==1 && qo->attriCnt==2) {
+        // qo->sqlResult is array sqlResult[attriCnt] where .value has values for
+        // all rows (seek in the string with row number - but we don't have to with just one row)
+        int attrIdx;
+        *user=NULL;
+        *zone=NULL;
+        for (attrIdx=0; attrIdx < qo->attriCnt; attrIdx++) {
+            if (qo->sqlResult[attrIdx].attriInx==COL_USER_NAME) {
+                *user=strdup(qo->sqlResult[attrIdx].value);
+                libirodsmap_log(IRODSMAP_LOG_DEBUG, "libirodsmap_query_dn: rcGenQuery returned user %s (rc=%d)\n", *user, rc);
+            };
+            if (qo->sqlResult[attrIdx].attriInx==COL_USER_ZONE) {
+                *zone=strdup(qo->sqlResult[attrIdx].value);
+                libirodsmap_log(IRODSMAP_LOG_DEBUG, "libirodsmap_query_dn: rcGenQuery returned zone %s (rc=%d)\n", *zone, rc);
+            };
+        };
+        // last check: if both user and zone are set.
+        // If not, either something went wrong with the query, or stdup failed
+        if (*user == NULL || *zone == NULL) {
+            rc = ENAMETOOLONG;
+            //free what has been allocated
+            if (*user != NULL) { free(*user); *user=NULL; };
+            if (*zone != NULL) { free(*zone); *zone=NULL; };
+        }
+        // in this case, rc == 0
+    } else {
+        // if we did not get exactly one row with two attributes, we mark it as a failure
+        rc = CAT_NO_ROWS_FOUND;
+        libirodsmap_log(IRODSMAP_LOG_ERR,"libirodsmap_query_dn: rcGenQuery returned %s%d rows\n", "", qo->rowCnt);
+        libirodsmap_log(IRODSMAP_LOG_ERR,"libirodsmap_query_dn: rcGenQuery returned %s%d attributes\n", "", qo->attriCnt);
+    }
+    // only if rcGenQuery was successful we free genQuery_out
+    // And we use freeGenQueryOut which dives into the data structures
+    // (and also sets the pointer to NULL - that's why it's passed by reference)
+    freeGenQueryOut(&qo);
 
  query_error:
-	/* free input structure
-	 * use these methods to release the allocations made by addInxIval/addInxVal
-	 * int clearInxIval (inxIvalPair_t *inxIvalPair);
-	 * int clearInxVal (inxValPair_t *inxValPair);
-	 */
+    /* free input structure
+     * use these methods to release the allocations made by addInxIval/addInxVal
+     * int clearInxIval (inxIvalPair_t *inxIvalPair);
+     * int clearInxVal (inxValPair_t *inxValPair);
+     */
     if (qi != NULL) {
-		clearInxIval(&qi->selectInp);
-		clearInxVal(&qi->sqlCondInp);
-		free(qi);
+        clearInxIval(&qi->selectInp);
+        clearInxVal(&qi->sqlCondInp);
+        free(qi);
     }
 
 
@@ -219,23 +219,23 @@ int libirodsmap_exec_command(rcComm_t * rcComm, const char * dnCommand, const ch
 
     execCmd = calloc(1, sizeof(execCmd_t));
     if (execCmd == NULL) {
-    	rc = ENAMETOOLONG;
-    	goto exec_command_error;
+        rc = ENAMETOOLONG;
+        goto exec_command_error;
     }
 
     if ( (strlen(dnCommand)+1) <= sizeof(execCmd->cmd) )
         strcpy(execCmd->cmd,dnCommand);
     else {
-    	rc = ENAMETOOLONG;
+        rc = ENAMETOOLONG;
         libirodsmap_log(IRODSMAP_LOG_ERR, "libirodsmap_exec_command: " IRODS_DN_COMMAND " too long: %s\n", dnCommand, 0);
-    	goto exec_command_error;
+        goto exec_command_error;
     }
     if ( (strlen(dn)+1) <= sizeof(execCmd->cmdArgv) )
         strcpy(execCmd->cmdArgv,dn);
     else {
-    	rc = ENAMETOOLONG;
+        rc = ENAMETOOLONG;
         libirodsmap_log(IRODSMAP_LOG_ERR, "libirodsmap_exec_command: DN too long: %s\n", dn, 0);
-    	goto exec_command_error;
+        goto exec_command_error;
     }
 
     // Invoke: int rcExecCmd (rcComm_t *conn, execCmd_t *execCmdInp, execCmdOut_t **execCmdOut)
@@ -243,14 +243,14 @@ int libirodsmap_exec_command(rcComm_t * rcComm, const char * dnCommand, const ch
     libirodsmap_log(IRODSMAP_LOG_INFO,"libirodsmap_exec_command: invoking rsExecCmd with DN %s\n", dn, 0);
     rc = rcExecCmd (rcComm, execCmd, &execCmdOut);
     if (rc != 0)
-    	libirodsmap_log(IRODSMAP_LOG_ERR,"libirodsmap_exec_command: rsExecCmd returned %s%d\n", "", rc);
+        libirodsmap_log(IRODSMAP_LOG_ERR,"libirodsmap_exec_command: rsExecCmd returned %s%d\n", "", rc);
 
 exec_command_error:
     // cleanup
-	if (execCmd != NULL) { free(execCmd); execCmd = NULL; };
-	if (execCmdOut != NULL) { free(execCmdOut); ; execCmdOut = NULL; };
+    if (execCmd != NULL) { free(execCmd); execCmd = NULL; };
+    if (execCmdOut != NULL) { free(execCmdOut); ; execCmdOut = NULL; };
 
-	return rc;
+    return rc;
 }
 
 
@@ -283,13 +283,13 @@ int get_irods_mapping(const char * dn, char ** user, char ** zone, const char * 
 
     // If the user was not found and if configured to run a script, invoke the command now and try querying again
     if ( rc == CAT_NO_ROWS_FOUND ) {
-    	char * dnCommand = getenv(IRODS_DN_COMMAND);
-    	if (dnCommand != NULL) {
-    	    if ( (rc=libirodsmap_exec_command(rcComm, dnCommand, dn)) != 0 ) goto irods_mapping_error;
-    	    // try one more time the query - if the command changed something and the DN has a mapping now
-    	    rc = libirodsmap_query_dn(rcComm, dn, user, zone, desired_user, desired_zone);
-    	    if ( rc !=0 && rc != CAT_NO_ROWS_FOUND) goto irods_mapping_error;
-    	}
+        char * dnCommand = getenv(IRODS_DN_COMMAND);
+        if (dnCommand != NULL) {
+            if ( (rc=libirodsmap_exec_command(rcComm, dnCommand, dn)) != 0 ) goto irods_mapping_error;
+            // try one more time the query - if the command changed something and the DN has a mapping now
+            rc = libirodsmap_query_dn(rcComm, dn, user, zone, desired_user, desired_zone);
+            if ( rc !=0 && rc != CAT_NO_ROWS_FOUND) goto irods_mapping_error;
+        }
     }
     // now, all attempts are completed (and none of them ran into an error)
     // rc is either 0 (user+zone found) or CAT_NO_ROWS_FOUND
@@ -297,11 +297,11 @@ int get_irods_mapping(const char * dn, char ** user, char ** zone, const char * 
     // so just return rc
 
 irods_mapping_error:
-	// cleanup
-	if (rcComm != NULL) {
-		// disconnect
-		rcDisconnect(rcComm);
-		rcComm = NULL;
-	}
+    // cleanup
+    if (rcComm != NULL) {
+        // disconnect
+        rcDisconnect(rcComm);
+        rcComm = NULL;
+    }
     return rc;
 }

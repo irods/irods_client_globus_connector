@@ -114,7 +114,7 @@ gridmap_iRODS_mapuser(char * subject, char ** found_identity, char * desired_ide
       // if the '#' separator is present
       char * separator_ptr;
       if ( (separator_ptr = strchr(desired_identity,'#')) != NULL ) {
-    	  // NOTE: these strdup calls are not checked
+          // NOTE: these strdup calls are not checked
           desired_user = strndup(desired_identity, separator_ptr - desired_identity);
           desired_zone = strdup(separator_ptr + 1);
       } else {
@@ -132,7 +132,7 @@ gridmap_iRODS_mapuser(char * subject, char ** found_identity, char * desired_ide
         *found_identity=identity;
         result = GLOBUS_SUCCESS;
     } else {
-    	result = ENAMETOOLONG;
+        result = ENAMETOOLONG;
     }
     free(user);
     free(zone);
@@ -193,7 +193,7 @@ gridmap_iRODS_callout(
                 ("Could not extract shared user identity."));
             goto error;
         }
-	globus_gfs_log_message(GLOBUS_GFS_LOG_DUMP, "gridmap_iRODS_callout: sharing: subject = %s\n", subject);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_DUMP, "gridmap_iRODS_callout: sharing: subject = %s\n", subject);
     }
     else
     {
@@ -201,7 +201,7 @@ gridmap_iRODS_callout(
         // Reuse code from gridmap_callout_verify_myproxy
         result = gridmap_iRODS_callout_get_subject(context, &subject);
         if (result == GLOBUS_SUCCESS)
-	    globus_gfs_log_message(GLOBUS_GFS_LOG_DUMP, "gridmap_iRODS_callout: context: subject = %s\n", subject);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_DUMP, "gridmap_iRODS_callout: context: subject = %s\n", subject);
 
     }
 
@@ -213,46 +213,46 @@ gridmap_iRODS_callout(
             ("Could not extract user identity."));
         goto error;
     }
-	
-	// Calling the pre-map script (passed in $IRODS_PREMAP_SCRIPT), that allows verifying the user online prior mapping
-	// The mechanism was implemented for EUDAT-PRACE integration and the script for that integration is:
-	// B2SAFE-core/scripts/authN_and_authZ/irods_user_sync.py
-	// Michal Jankowski PSNC, 03.2017
-	const char* premap_script = getenv(IRODS_PREMAP_SCRIPT);
-	if(premap_script != NULL)
-	{
-		int comand_len = strlen(premap_script) + strlen(subject) + 8;
-		char* command = malloc(comand_len);
-		if(command == NULL)
+
+    // Calling the pre-map script (passed in $IRODS_PREMAP_SCRIPT), that allows verifying the user online prior mapping
+    // The mechanism was implemented for EUDAT-PRACE integration and the script for that integration is:
+    // B2SAFE-core/scripts/authN_and_authZ/irods_user_sync.py
+    // Michal Jankowski PSNC, 03.2017
+    const char* premap_script = getenv(IRODS_PREMAP_SCRIPT);
+    if(premap_script != NULL)
+    {
+        int comand_len = strlen(premap_script) + strlen(subject) + 8;
+        char* command = malloc(comand_len);
+        if(command == NULL)
         {
-		   GLOBUS_GRIDMAP_CALLOUT_ERROR(
+           GLOBUS_GRIDMAP_CALLOUT_ERROR(
                result,
                GLOBUS_GRIDMAP_CALLOUT_GSSAPI_ERROR,
                ("Pre-map script cannot be called, memory allocation problem."));
             goto error;
-	    }
-		
-		snprintf(command, comand_len, "%s -d \"%s\"", premap_script, subject);
-		globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "Calling pre-map command %s.\n", command);
-		int command_result = system(command);
-		free(command);
-		
-		if(command_result != 0)
+        }
+
+        snprintf(command, comand_len, "%s -d \"%s\"", premap_script, subject);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "Calling pre-map command %s.\n", command);
+        int command_result = system(command);
+        free(command);
+
+        if(command_result != 0)
         {
-		
-		   GLOBUS_GRIDMAP_CALLOUT_ERROR(
+
+           GLOBUS_GRIDMAP_CALLOUT_ERROR(
                result,
                GLOBUS_GRIDMAP_CALLOUT_GSSAPI_ERROR,
                ("Pre-map script failed."));
             goto error;
-	    }
-	 }
+        }
+    }
 
     // Perform the mapping now - set found_identity
     result = gridmap_iRODS_mapuser(subject, &found_identity, desired_identity);
     if(result == GLOBUS_SUCCESS)
     {
-	globus_gfs_log_message(GLOBUS_GFS_LOG_DUMP, "gridmap_iRODS_callout: identity: %s\n", found_identity);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_DUMP, "gridmap_iRODS_callout: identity: %s\n", found_identity);
         if(desired_identity && strcmp(found_identity, desired_identity) != 0)
         {
             GLOBUS_GRIDMAP_CALLOUT_ERROR(

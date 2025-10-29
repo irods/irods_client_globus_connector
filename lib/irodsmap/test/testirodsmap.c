@@ -12,7 +12,7 @@ int main(int argc, char **argv)
         if ( (rc = get_irods_mapping(argv[1],&user,&zone, NULL, NULL)) == 0)
             fprintf(stdout, "Mapping for %s is %s#%s\n", argv[1], user, zone);
         else
-	        fprintf(stderr, "Mapping for %s failed (%d)\n", argv[1], rc);
+            fprintf(stderr, "Mapping for %s failed (%d)\n", argv[1], rc);
         return rc;
     } else {
         fprintf(stderr,"Usage: %s <DN>\n", argv[0]);
