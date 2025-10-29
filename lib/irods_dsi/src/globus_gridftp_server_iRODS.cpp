@@ -1822,8 +1822,7 @@ void execute_writer_thread_operation(
     globus_result_t result;
     int irods_fd;
 
-    std::stringstream write_thread_id_ss;
-    write_thread_id_ss << "write thread (" << thr_id << ")";
+    std::string write_thread_id_str = fmt::format("write thread ({})", thr_id);
 
     // connect and open the data object
     // thread 0 already has the connection and data obect opened
@@ -1833,7 +1832,7 @@ void execute_writer_thread_operation(
     }
     else
     {
-        if (!iRODS_connect_and_login(iRODS_handle, result, conn, write_thread_id_ss.str())) {
+        if (!iRODS_connect_and_login(iRODS_handle, result, conn, write_thread_id_str)) {
             globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: thread %d: failed to connect.  exiting...\n", thr_id);
             globus_mutex_lock(&iRODS_handle->mutex);
             irods::at_scope_exit unlock_mutex{[&iRODS_handle] { globus_mutex_unlock(&iRODS_handle->mutex); }};
@@ -1992,7 +1991,7 @@ void execute_writer_thread_operation(
        json_input["preserve_replica_state_table"] = false;
        const auto json_string = json_input.dump();
        rc_replica_close(conn, json_string.c_str());
-       iRODS_disconnect(conn, write_thread_id_ss.str());
+       iRODS_disconnect(conn, write_thread_id_str);
    }
 }
 
@@ -2484,8 +2483,7 @@ globus_l_gfs_iRODS_send(
         {
             if (conn_vector[thr_id])
             {
-                std::stringstream irods_read_thread_ss;
-                irods_read_thread_ss << "irods read thread (" << thr_id << ")";
+                std::string irods_read_thread_str = fmt::format("irods read thread ({})", thr_id);
 
                 // close the object and disconnect this thread from iRODS
                 nlohmann::json json_input{{"fd", fd_vector[thr_id]}};
@@ -2495,7 +2493,7 @@ globus_l_gfs_iRODS_send(
                 const auto json_string = json_input.dump();
                 rc_replica_close(conn_vector[thr_id], json_string.c_str());
 
-                iRODS_disconnect(conn_vector[thr_id], irods_read_thread_ss.str());
+                iRODS_disconnect(conn_vector[thr_id], irods_read_thread_str);
             }
         }
 
@@ -2555,10 +2553,9 @@ globus_l_gfs_iRODS_send(
     {
         globus_result_t result;
 
-        std::stringstream irods_read_thread_ss;
-        irods_read_thread_ss << "irods read thread (" << thr_id << ")";
+        std::string irods_read_thread_str = fmt::format("irods read thread ({})", thr_id);
 
-        if (!iRODS_connect_and_login(iRODS_handle, result, conn_vector[thr_id], irods_read_thread_ss.str()))
+        if (!iRODS_connect_and_login(iRODS_handle, result, conn_vector[thr_id], irods_read_thread_str))
         {
             globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: thread %d: failed to connect.  exiting...\n", thr_id);
             iRODS_handle->done = true;
