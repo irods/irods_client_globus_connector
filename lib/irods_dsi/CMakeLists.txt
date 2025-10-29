@@ -20,6 +20,7 @@ target_link_libraries(
 	PRIVATE
 	irods_client
 	fmt::fmt
+	nlohmann_json::nlohmann_json
 	Globus::common
 	Globus::gridftp_server
 )

@@ -84,7 +84,6 @@ find_package(
 	gssapi_gsi
 )
 
-add_subdirectory(third-party)
 add_subdirectory(lib)
 
 include(IrodsCPackCommon)

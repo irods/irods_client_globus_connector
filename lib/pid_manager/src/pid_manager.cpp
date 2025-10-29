@@ -1,17 +1,19 @@
 #include "pid_manager.h"
 
+extern "C" {
 #include <globus_gridftp_server.h>
+}
 
 #include <curl/curl.h>
 #include <curl/easy.h>
 
-#include <stddef.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <nlohmann/json.hpp>
 
-// needs system includes first
-#include "cJSON.h"
+#include <cstddef>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
 
 struct string {
   char *ptr;
@@ -20,7 +22,7 @@ struct string {
 
 void init_string(struct string *s) {
     s->len = 0;
-    s->ptr = malloc(s->len+1);
+    s->ptr = static_cast<char*>(malloc(s->len+1));
     if (s->ptr == NULL) {
         globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: manage_pid malloc() failed\n");
     }
@@ -30,7 +32,7 @@ void init_string(struct string *s) {
 size_t writefunc(void *ptr, size_t size, size_t nmemb, struct string *s)
 {
     size_t new_len = s->len + size*nmemb;
-    s->ptr = realloc(s->ptr, new_len+1);
+    s->ptr = static_cast<char*>(realloc(s->ptr, new_len+1));
     if (s->ptr == NULL) {
         globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: manage_pid realloc() failed\n");
     }
@@ -62,7 +64,7 @@ int manage_pid(char *pid_handle_URL, char *PID,  char **URL) {
             pid_handle_URL[len - 1] = 0;
         }
 
-        completeURL = malloc(strlen(pid_handle_URL)+strlen(PID)+1);
+        completeURL = static_cast<char*>(malloc(strlen(pid_handle_URL)+strlen(PID)+1));
         strcpy(completeURL, pid_handle_URL);
         strcat(completeURL, PID);
 
@@ -88,35 +90,32 @@ int manage_pid(char *pid_handle_URL, char *PID,  char **URL) {
         curl_easy_cleanup(curl);
         globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: JSON output from the Handle Server: %s\n", s.ptr);
 
-        cJSON *root = cJSON_Parse(s.ptr);
-        printf("JSON output: %s..\n", s.ptr);        
-        int responseCode  = cJSON_GetObjectItem(root,"responseCode")->valueint;
-        if (responseCode != 1)
-        {
-            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: JSON responseCode =  %i\n", responseCode);
-            free(s.ptr);
-            return responseCode;
+        try {
+            const auto res_json = nlohmann::json::parse(s.ptr);
+            std::printf("JSON output: %s..\n", s.ptr);
+            auto responseCode = res_json.at("responseCode").get<nlohmann::json::number_integer_t>();
+            if (1 != responseCode) {
+                globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: JSON responseCode =  %i\n", responseCode);
+                free(s.ptr);
+                return responseCode;
+            }
+            const auto &values = res_json.at("values");
+            for (const auto& value : values) {
+                const std::string& value_type = value.at("type").get_ref<const std::string&>();
+                if (value_type == "URL") {
+                    const std::string& myURL = value.at("data").at("value").get_ref<const std::string&>();
+                    *URL = static_cast<char*>(std::calloc(myURL.size() + 1, sizeof(char)));
+                    std::memcpy(*URL, myURL.c_str(), myURL.size());
+                    (*URL)[myURL.size()] = '\0';
+                    std::free(s.ptr);
+                    return 0;
+                }
+            }
         }
-        cJSON *values = cJSON_GetObjectItem(root,"values");
-        int numberOfKeys = cJSON_GetArraySize(values);
-
-        int i = 0;
-        for (i = 0; i < numberOfKeys; i++)
-        {
-            cJSON *values_i = cJSON_GetArrayItem(values, i);
-            char * mytype  = cJSON_GetObjectItem(values_i, "type")->valuestring;
-            if ( strcmp("URL", mytype) == 0)
-            {
-	        cJSON *data = cJSON_GetObjectItem(values_i, "data");
-	        char *myURL  = cJSON_GetObjectItem(data,"value")->valuestring;
-	        *URL = malloc(strlen(myURL)+1);
-	        strcpy(*URL, myURL);
-	        free(s.ptr);
-	        return 0;
-	        break;
-	    }
+        catch (const nlohmann::json::exception& e) {
+            globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS DSI: JSON error in pid_manager: %s\n", e.what());
         }
-        free(s.ptr);
+        std::free(s.ptr);
         return 1;
     }
     return 1;

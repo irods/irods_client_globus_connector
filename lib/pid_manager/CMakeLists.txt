@@ -1,7 +1,7 @@
 add_library(
 	irods_globus_pid_manager
 	OBJECT
-	"${CMAKE_CURRENT_SOURCE_DIR}/src/pid_manager.c"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/pid_manager.cpp"
 	"${CMAKE_CURRENT_SOURCE_DIR}/include/pid_manager.h"
 )
 objects_link_libraries(
@@ -9,7 +9,7 @@ objects_link_libraries(
 	PUBLIC
 	Globus::gridftp_server
 	CURL::libcurl
-	irods_globus_cJSON
+	nlohmann_json::nlohmann_json
 )
 target_include_directories(
 	irods_globus_pid_manager
