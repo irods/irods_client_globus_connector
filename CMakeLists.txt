@@ -71,7 +71,6 @@ include(ObjectTargetHelpers)
 find_package(CURL REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(fmt 8.1.1 REQUIRED)
-find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 find_package(
 	Globus
 	REQUIRED
@@ -127,14 +126,9 @@ elseif (CURL_LIBRARY_REALNAME STREQUAL "libcurl-nss")
 elseif (CURL_LIBRARY_REALNAME STREQUAL "libcurl")
 	set(CPACK_DEBIAN_PACKAGE_DEPENDS "${CPACK_DEBIAN_PACKAGE_DEPENDS}, libcurl4")
 endif()
-if (OPENSSL_VERSION VERSION_LESS "3.0.0")
-	set(CPACK_DEBIAN_PACKAGE_DEPENDS "${CPACK_DEBIAN_PACKAGE_DEPENDS}, libssl1.1")
-else()
-	set(CPACK_DEBIAN_PACKAGE_DEPENDS "${CPACK_DEBIAN_PACKAGE_DEPENDS}, libssl3")
-endif()
 
 set(CPACK_RPM_PACKAGE_NAME ${IRODS_CLIENT_NAME})
-set(CPACK_RPM_PACKAGE_REQUIRES "${IRODS_PACKAGE_DEPENDENCIES_STRING}, irods-runtime = ${IRODS_VERSION}, (libcurl or libcurl-minimum), openssl")
+set(CPACK_RPM_PACKAGE_REQUIRES "${IRODS_PACKAGE_DEPENDENCIES_STRING}, irods-runtime = ${IRODS_VERSION}, (libcurl or libcurl-minimum)")
 
 if (NOT CPACK_GENERATOR)
 	set(CPACK_GENERATOR ${IRODS_CPACK_GENERATOR} CACHE STRING "CPack generator to use, e.g. {DEB, RPM, TGZ}." FORCE)

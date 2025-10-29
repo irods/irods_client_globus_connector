@@ -1,5 +1,4 @@
 add_subdirectory(pid_manager)
 add_subdirectory(irodsmap)
-add_subdirectory(globus_hasher)
 add_subdirectory(gridmap_callout)
 add_subdirectory(irods_dsi)

@@ -24,9 +24,7 @@
  */
 
 // local includes
-#include "Hasher.hpp"
 #include "circular_buffer.hpp"
-#include "irods_hasher_factory.hpp"
 #include "pid_manager.h"
 
 // irods includes
@@ -45,6 +43,7 @@
 #include <irods/getRodsEnv.h>
 #include <irods/irods_at_scope_exit.hpp>
 #include <irods/irods_error.hpp>
+#include <irods/irods_hasher_factory.hpp>
 #include <irods/irods_query.hpp>
 #include <irods/irods_string_tokenize.hpp>
 #include <irods/irods_virtual_path.hpp>
@@ -1669,10 +1668,10 @@ globus_l_gfs_iRODS_command(
                }
 
                // get the hasher
-               irods::globus::Hasher hasher;
+               irods::Hasher hasher;
                std::string checksum_algorithm_lower(cmd_info->cksm_alg);
                boost::to_lower(checksum_algorithm_lower);
-               irods::error ret = irods::globus::getHasher(
+               irods::error ret = irods::getHasher(
                                       checksum_algorithm_lower.c_str(),
                                       hasher );
                if ( !ret.ok() ) {

@@ -27,7 +27,6 @@ target_link_objects(
 	globus_gridftp_server_iRODS
 	PRIVATE
 	irods_globus_pid_manager
-	irods_globus_hasher
 )
 target_include_directories(
 	globus_gridftp_server_iRODS
