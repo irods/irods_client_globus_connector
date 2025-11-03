@@ -37,6 +37,11 @@ if (IRODS_BUILD_TESTS)
 		PRIVATE
 		irods_globus_irodsmap
 	)
+	set_target_properties(
+		testirodsmap
+		PROPERTIES
+		BUILD_WITH_INSTALL_RPATH "${IRODS_TESTS_BUILD_WITH_INSTALL_RPATH}"
+	)
 
 	install(
 		TARGETS testirodsmap

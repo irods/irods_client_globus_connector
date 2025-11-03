@@ -39,6 +39,11 @@ if (IRODS_BUILD_TESTS)
 		PRIVATE
 		irods_globus_pid_manager
 	)
+	set_target_properties(
+		testpidmanager
+		PROPERTIES
+		BUILD_WITH_INSTALL_RPATH "${IRODS_TESTS_BUILD_WITH_INSTALL_RPATH}"
+	)
 
 	install(
 		TARGETS testpidmanager
