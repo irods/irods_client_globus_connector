@@ -84,6 +84,19 @@ find_package(
 	gssapi_gsi
 )
 
+SET (IRODS_BUILD_TESTS_DOCSTR "Choose whether to build tests")
+# Tests built by default for Debug configuration
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+	set(_IRODS_BUILD_TESTS_DEFAULT ON)
+else()
+	set(_IRODS_BUILD_TESTS_DEFAULT OFF)
+endif()
+set(IRODS_BUILD_TESTS ${_IRODS_BUILD_TESTS_DEFAULT} CACHE BOOL "${IRODS_BUILD_TESTS_DOCSTR}")
+# Respect IRODS_ENABLE_ALL_TESTS
+if (IRODS_ENABLE_ALL_TESTS)
+	set(IRODS_BUILD_TESTS ON CACHE BOOL "${IRODS_BUILD_TESTS_DOCSTR}" FORCE)
+endif()
+
 add_subdirectory(lib)
 
 include(IrodsCPackCommon)

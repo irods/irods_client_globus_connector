@@ -29,18 +29,20 @@ set_target_properties(
 	POSITION_INDEPENDENT_CODE TRUE
 )
 
-add_executable(
-	testpidmanager
-	"${CMAKE_CURRENT_SOURCE_DIR}/test/pid_manager_test.cpp"
-)
-target_link_objects(
-	testpidmanager
-	PRIVATE
-	irods_globus_pid_manager
-)
+if (IRODS_BUILD_TESTS)
+	add_executable(
+		testpidmanager
+		"${CMAKE_CURRENT_SOURCE_DIR}/test/pid_manager_test.cpp"
+	)
+	target_link_objects(
+		testpidmanager
+		PRIVATE
+		irods_globus_pid_manager
+	)
 
-install(
-	TARGETS testpidmanager
-	RUNTIME
-	DESTINATION "${CMAKE_INSTALL_BINDIR}"
-)
+	install(
+		TARGETS testpidmanager
+		RUNTIME
+		DESTINATION "${CMAKE_INSTALL_BINDIR}"
+	)
+endif()

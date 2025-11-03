@@ -27,18 +27,20 @@ set_target_properties(
 	POSITION_INDEPENDENT_CODE TRUE
 )
 
-add_executable(
-	testirodsmap
-	"${CMAKE_CURRENT_SOURCE_DIR}/test/testirodsmap.c"
-)
-target_link_objects(
-	testirodsmap
-	PRIVATE
-	irods_globus_irodsmap
-)
+if (IRODS_BUILD_TESTS)
+	add_executable(
+		testirodsmap
+		"${CMAKE_CURRENT_SOURCE_DIR}/test/testirodsmap.c"
+	)
+	target_link_objects(
+		testirodsmap
+		PRIVATE
+		irods_globus_irodsmap
+	)
 
-install(
-	TARGETS testirodsmap
-	RUNTIME
-	DESTINATION "${CMAKE_INSTALL_BINDIR}"
-)
+	install(
+		TARGETS testirodsmap
+		RUNTIME
+		DESTINATION "${CMAKE_INSTALL_BINDIR}"
+	)
+endif()
