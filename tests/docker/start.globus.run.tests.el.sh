@@ -34,13 +34,14 @@ touch /var/adm/wtmp
 touch /var/log/messages
 
 HEX_ID=$(ls /etc/grid-security/certificates/*.0 | cut -d/ -f5 | cut -d. -f1)
+sed -i 's|= sha1|= sha256|g' /etc/grid-security/certificates/globus-host-ssl.conf.${HEX_ID}
 sed -i 's|= policy_match|= policy_anything|g' /etc/grid-security/certificates/globus-host-ssl.conf.${HEX_ID}
 sed -i 's|cond_subjects     globus       .*|cond_subjects     globus       '"'"'"*"'"'"'|g' /etc/grid-security/certificates/${HEX_ID}.signing_policy
 grid-cert-request -ca ${HEX_ID} -nopw -cn $(hostname) -force # creates ~/.globus/usercert.pem usercert_request.pem userkey.pem
 cp ~/.globus/userkey.pem /etc/grid-security/hostkey.pem
 cp /etc/grid-security/certificates/${HEX_ID}.0 ~/.globus/${HEX_ID}.0
 cp /etc/grid-security/certificates/${HEX_ID}.signing_policy ~/.globus/${HEX_ID}.signing_policy
-echo globus  | grid-ca-sign -in ~/.globus/usercert_request.pem -out hostcert.pem  # sign the cert
+echo globus  | grid-ca-sign -in ~/.globus/usercert_request.pem -md sha256 -out hostcert.pem  # sign the cert
 cp hostcert.pem /etc/grid-security/hostcert.pem
 cp hostcert.pem ~/.globus/usercert.pem
 
