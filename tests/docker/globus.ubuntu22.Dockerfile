@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y curl \
     wget \
     gnupg2 \
     lsb-release \
+    sudo \
     && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/*
