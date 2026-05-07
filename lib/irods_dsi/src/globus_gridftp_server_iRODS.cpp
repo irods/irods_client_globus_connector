@@ -1953,6 +1953,7 @@ void execute_writer_thread_operation(
                bytesBuf_t dataObjWriteInpBBuf;
                dataObjWriteInpBBuf.buf = write_buffer_object.buffer;
                dataObjWriteInpBBuf.len = write_buffer_object.nbytes;
+               globus_gfs_log_message(GLOBUS_GFS_LOG_DUMP, "iRODS: thread (%d) BEGIN writing %lld bytes to iRODS at offset %lld\n", thr_id, write_buffer_object.nbytes, write_buffer_object.offset);
 
                int bytes_written  = rcDataObjWrite(conn, &dataObjWriteInp, &dataObjWriteInpBBuf);
                if (bytes_written < dataObjWriteInp.len) {
@@ -1964,6 +1965,7 @@ void execute_writer_thread_operation(
                } else {
                    globus_gridftp_server_update_bytes_written(op, write_buffer_object.offset, bytes_written);
                }
+               globus_gfs_log_message(GLOBUS_GFS_LOG_DUMP, "iRODS: thread (%d) DONE writing %lld bytes to iRODS at offset %lld\n", thr_id, write_buffer_object.nbytes, write_buffer_object.offset);
             }
 
             globus_free(write_buffer_object.buffer);
@@ -2213,6 +2215,7 @@ globus_l_gfs_iRODS_recv(
         iRODS_handle->op = op;
         globus_gridftp_server_get_block_size(
             op, &iRODS_handle->block_size);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "iRODS: block_size = %lld\n", iRODS_handle->block_size);
     }
 
     globus_gridftp_server_begin_transfer(op, 0, iRODS_handle);
@@ -2801,6 +2804,7 @@ globus_l_gfs_iRODS_net_read_cb(
 
             // write to circular buffer - done flags are set in the post-push lambda to avoid
             // race conditions
+            globus_gfs_log_message(GLOBUS_GFS_LOG_DUMP, "iRODS: BEGIN reading %lld bytes from Globus client at offset %lld and writing to circular buffer\n", nbytes, offset);
             irods_write_circular_buffer.push_back({buffer, nbytes, offset }, [&iRODS_handle, &result] {
 
                     {
@@ -2817,6 +2821,7 @@ globus_l_gfs_iRODS_net_read_cb(
 
                 });  // circular buffer reader handles the done flag
 
+            globus_gfs_log_message(GLOBUS_GFS_LOG_DUMP, "iRODS: DONE reading %lld bytes from Globus client at offset %lld and writing to circular buffer\n", nbytes, offset);
             // don't free buffer as it is used by threads reading the circular buffer
 
         } catch (irods::experimental::timeout_exception& e) {
