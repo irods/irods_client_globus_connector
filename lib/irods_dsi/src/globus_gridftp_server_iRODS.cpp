@@ -135,6 +135,9 @@ extern "C" {
 /* if present, set the number or read/write threads for file transfers */
 #define IRODS_PARALLEL_FILE_SIZE_THRESHOLD_BYTES "irodsParallelFileSizeThresholdBytes"
 
+/* if present, set the read buffer size for file reads for checksum calculations */
+#define FILE_READ_FOR_CHECKSUM_CALCULATION_BUFFER_SIZE_BYTES "fileReadForChecksumCalculationBufferSizeBytes"
+
 const static unsigned int DEFAULT_NUMBER_OF_IRODS_READ_WRITE_THREADS = 3;
 const static unsigned int MAXIMUM_NUMBER_OF_IRODS_READ_WRITE_THREADS = 10;
 
@@ -1680,41 +1683,61 @@ globus_l_gfs_iRODS_command(
                    break;
                }
 
-               // read file and calculate hash
-               constexpr unsigned int HASH_BUF_SZ = 1024*1024;
+               unsigned int hash_buf_size = 8*1024*1024;
+
+               char * hash_buf_size_str = getenv(FILE_READ_FOR_CHECKSUM_CALCULATION_BUFFER_SIZE_BYTES);
+               if (hash_buf_size_str)
+               {
+                   try
+                   {
+                       hash_buf_size = boost::lexical_cast<unsigned int>(hash_buf_size_str);
+                   } catch ( const boost::bad_lexical_cast& ) {
+                       globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: [%s] value [%s] could not be parsed as an unsigned int.  Using the default value of %u.\n",
+                               FILE_READ_FOR_CHECKSUM_CALCULATION_BUFFER_SIZE_BYTES, hash_buf_size_str, hash_buf_size);
+                   }
+               }
+               globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: Buffer size for checksum read is %u\n", hash_buf_size);
 
                dataObjInp_t inp_obj{};
                inp_obj.createMode = 0600;
                inp_obj.openFlags = O_RDONLY;
                rstrcpy(inp_obj.objPath, collection, MAX_NAME_LEN);
                int fd = rcDataObjOpen(iRODS_handle->conn, &inp_obj);
+
+               openedDataObjInp_t input{};
+               input.l1descInx = fd;
+               input.len = hash_buf_size;
+
                if (fd < 3) {
                    status = -1;
                    globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,"iRODS: rcDataObjOpen returned invalid file descriptor = %d\n", fd);
                    break;
                }
 
-               char buffer_read[HASH_BUF_SZ] = {0};
+               try {
+                   std::vector<char> buffer_read(hash_buf_size);
 
-               openedDataObjInp_t input{};
-               input.l1descInx = fd;
-               input.len = HASH_BUF_SZ;
+                   bytesBuf_t output{};
+                   output.len = input.len;
+                   output.buf = buffer_read.data();
 
-               bytesBuf_t output{};
-               output.len = input.len;
-               output.buf = buffer_read;
+                   int length_read = 0;
+                   while ((length_read = rcDataObjRead(iRODS_handle->conn, &input, &output)) > 0) {
 
-               int length_read = 0;
-               while ((length_read = rcDataObjRead(iRODS_handle->conn, &input, &output)) > 0) {
+                       {
+                           pthread_mutex_lock(&mutex);
+                           irods::at_scope_exit unlock_mutex{[&mutex] { pthread_mutex_unlock(&mutex); }};
+                           checksum_bytes_processed += length_read;
+                       }
 
-                   {
-                       pthread_mutex_lock(&mutex);
-                       irods::at_scope_exit unlock_mutex{[&mutex] { pthread_mutex_unlock(&mutex); }};
-                       checksum_bytes_processed += length_read;
+                       std::string s(static_cast<char*>(output.buf), length_read);
+                       hasher.update(s);
                    }
-
-                   std::string s(static_cast<char*>(output.buf), length_read);
-                   hasher.update(s);
+               } catch (const std::bad_alloc& e) {
+                   rcDataObjClose(iRODS_handle->conn, &input);
+                   error_str = globus_common_create_string("iRODS: Could not allocate buffer of size (%u) for file checksum file read.\n", hash_buf_size);
+                   result = GlobusGFSErrorGeneric(error_str);
+                   break;
                }
 
                rcDataObjClose(iRODS_handle->conn, &input);
