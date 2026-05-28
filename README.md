@@ -293,6 +293,14 @@ Additional configuration
 
 	It is suggested that the administrator tests small file uploads and downloads to determine the best setting for the `$irodsParallelFileSizeThresholdBytes`. This depends on the network topology. In some cases, doing a query to iRODS for file size might be less efficient than starting up multiple threads. If that is the case, do not set `$irodsParallelFileSizeThresholdBytes`.
 
+7. To configure the buffer size (in bytes) for file reads when performing a full file read to calculate checksums, add the `$fileReadForChecksumCalculationBufferSizeBytes` parameter in the GridFTP configuration file. For example, to set this buffer to 32 MiB, set it as follows:
+
+   ```
+   $fileReadForChecksumCalculationBufferSizeBytes 33554432
+   ```
+
+   The default value for this parameter is 8 MiB. In environments with large latencies, increasing this size will give you better performance as it results in fewer round trips to iRODS while downloading the file.
+
 Additional notes
 ----------------
 
