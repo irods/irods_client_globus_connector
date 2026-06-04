@@ -29,6 +29,17 @@ target_link_objects(
 	PRIVATE
 	irods_globus_pid_manager
 )
+
+# The iRODS-provided hasher for sha512 is broken in iRODS 5.0.2.
+# Only use the iRODS hashers for releases greater than 5.0.2.
+# Otherwise, use the locally provided hashers.
+if (USE_LOCAL_HASHERS)
+	target_link_objects(
+		globus_gridftp_server_iRODS
+		PRIVATE
+		irods_globus_hasher
+	)
+endif()
 target_include_directories(
 	globus_gridftp_server_iRODS
 	PRIVATE

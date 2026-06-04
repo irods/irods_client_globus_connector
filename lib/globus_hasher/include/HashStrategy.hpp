@@ -1,0 +1,25 @@
+#ifndef IRODS_GLOBUS_CONNECTOR_HASH_STRATEGY_HPP
+#define IRODS_GLOBUS_CONNECTOR_HASH_STRATEGY_HPP
+
+#include <irods/irods_error.hpp>
+
+#include <boost/any.hpp>
+
+#include <string>
+
+namespace irods::globus {
+
+    class HashStrategy {
+        public:
+
+            virtual ~HashStrategy() {};
+
+            virtual std::string name() const = 0;
+            virtual error init( boost::any& context ) const = 0;
+            virtual error update( const std::string&, boost::any& context ) const = 0;
+            virtual error digest( std::string& messageDigest, boost::any& context ) const = 0;
+            virtual bool isChecksum( const std::string& ) const = 0;
+    };
+} // namespace irods::globus
+
+#endif // IRODS_GLOBUS_CONNECTOR_HASH_STRATEGY_HPP
