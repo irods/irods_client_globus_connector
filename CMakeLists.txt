@@ -22,6 +22,15 @@ set(IRODS_MINIMUM_VERSION "4.90.0")
 set(IRODS_MAXIMUM_VERSION "6.0.0")
 find_package(IRODS "${IRODS_MINIMUM_VERSION}...<${IRODS_MAXIMUM_VERSION}" REQUIRED)
 
+# The iRODS-provided hasher for sha512 is broken in iRODS 5.0.2.
+# Only use the iRODS hashers for releases greater than 5.0.2.
+# Otherwise, use the locally provided hashers.
+if (IRODS_VERSION VERSION_LESS_EQUAL "5.0.2")
+	set(USE_LOCAL_HASHERS TRUE)
+else()
+	set(USE_LOCAL_HASHERS FALSE)
+endif()
+
 include(RequireOutOfSourceBuild)
 
 set(IRODS_CLIENT_NAME "irods-gridftp-client")
@@ -71,6 +80,11 @@ include(ObjectTargetHelpers)
 find_package(CURL REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(fmt 8.1.1 REQUIRED)
+
+if (USE_LOCAL_HASHERS)
+	find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+endif()
+
 find_package(
 	Globus
 	REQUIRED
@@ -145,9 +159,20 @@ elseif (CURL_LIBRARY_REALNAME STREQUAL "libcurl-nss")
 elseif (CURL_LIBRARY_REALNAME STREQUAL "libcurl")
 	set(CPACK_DEBIAN_PACKAGE_DEPENDS "${CPACK_DEBIAN_PACKAGE_DEPENDS}, libcurl4")
 endif()
+if (USE_LOCAL_HASHERS)
+	if (OPENSSL_VERSION VERSION_LESS "3.0.0")
+		set(CPACK_DEBIAN_PACKAGE_DEPENDS "${CPACK_DEBIAN_PACKAGE_DEPENDS}, libssl1.1")
+	else()
+		set(CPACK_DEBIAN_PACKAGE_DEPENDS "${CPACK_DEBIAN_PACKAGE_DEPENDS}, libssl3")
+	endif()
+endif()
 
 set(CPACK_RPM_PACKAGE_NAME ${IRODS_CLIENT_NAME})
-set(CPACK_RPM_PACKAGE_REQUIRES "${IRODS_PACKAGE_DEPENDENCIES_STRING}, irods-runtime = ${IRODS_VERSION}, (libcurl or libcurl-minimum)")
+if (USE_LOCAL_HASHERS)
+	set(CPACK_RPM_PACKAGE_REQUIRES "${IRODS_PACKAGE_DEPENDENCIES_STRING}, irods-runtime = ${IRODS_VERSION}, (libcurl or libcurl-minimum), openssl")
+else()
+	set(CPACK_RPM_PACKAGE_REQUIRES "${IRODS_PACKAGE_DEPENDENCIES_STRING}, irods-runtime = ${IRODS_VERSION}, (libcurl or libcurl-minimum)")
+endif()
 
 if (NOT CPACK_GENERATOR)
 	set(CPACK_GENERATOR ${IRODS_CPACK_GENERATOR} CACHE STRING "CPack generator to use, e.g. {DEB, RPM, TGZ}." FORCE)

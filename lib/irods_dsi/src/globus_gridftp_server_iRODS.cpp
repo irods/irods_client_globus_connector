@@ -27,6 +27,21 @@
 #include "circular_buffer.hpp"
 #include "pid_manager.h"
 
+// irods version (needed to select the hasher implementation below)
+#include <irods/irods_version.h>
+
+// The iRODS-provided hasher for sha512 is broken in iRODS 5.0.2.
+// Only use the iRODS hashers for releases greater than 5.0.2.
+// Otherwise, use the locally provided hashers.
+#if IRODS_VERSION_INTEGER > 5000002
+#  include <irods/irods_hasher_factory.hpp>
+namespace irods_hasher_ns = irods;
+#else
+#  include "Hasher.hpp"
+#  include "irods_hasher_factory.hpp"
+namespace irods_hasher_ns = irods::globus;
+#endif
+
 // irods includes
 #include <irods/base64.hpp>
 #include <irods/collCreate.h>
@@ -43,7 +58,6 @@
 #include <irods/getRodsEnv.h>
 #include <irods/irods_at_scope_exit.hpp>
 #include <irods/irods_error.hpp>
-#include <irods/irods_hasher_factory.hpp>
 #include <irods/irods_query.hpp>
 #include <irods/irods_string_tokenize.hpp>
 #include <irods/irods_virtual_path.hpp>
@@ -1671,10 +1685,10 @@ globus_l_gfs_iRODS_command(
                }
 
                // get the hasher
-               irods::Hasher hasher;
+               irods_hasher_ns::Hasher hasher;
                std::string checksum_algorithm_lower(cmd_info->cksm_alg);
                boost::to_lower(checksum_algorithm_lower);
-               irods::error ret = irods::getHasher(
+               irods::error ret = irods_hasher_ns::getHasher(
                                       checksum_algorithm_lower.c_str(),
                                       hasher );
                if ( !ret.ok() ) {
