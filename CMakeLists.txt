@@ -34,8 +34,8 @@ endif()
 include(RequireOutOfSourceBuild)
 
 set(IRODS_CLIENT_NAME "irods-gridftp-client")
-set(IRODS_CLIENT_VERSION "5.0.1")
-set(IRODS_PACKAGE_REVISION "1")
+set(IRODS_CLIENT_VERSION "5.1.0")
+set(IRODS_PACKAGE_REVISION "0")
 
 include(IrodsExternals)
 include(IrodsCXXCompiler)
